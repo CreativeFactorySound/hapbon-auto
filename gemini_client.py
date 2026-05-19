@@ -6,9 +6,13 @@ from pathlib import Path
 from google import genai
 from google.genai import types
 
+import sys
+
 # 시스템 프롬프트를 외부 파일에서 로드
 # 규칙 수정 시 prompts/classify_system.txt 만 편집하면 됩니다
-_PROMPT_FILE = Path(__file__).parent / "prompts" / "classify_system.txt"
+# PyInstaller exe로 실행 시 sys._MEIPASS 경로 사용
+_BASE_DIR = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent
+_PROMPT_FILE = _BASE_DIR / "prompts" / "classify_system.txt"
 _CLASSIFY_SYSTEM = _PROMPT_FILE.read_text(encoding="utf-8")
 
 

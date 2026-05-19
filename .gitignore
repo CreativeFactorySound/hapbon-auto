@@ -1,3 +1,8 @@
+# PyInstaller 빌드 산출물
+build/
+dist/
+*.spec
+
 # Python
 __pycache__/
 *.py[cod]
