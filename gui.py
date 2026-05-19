@@ -135,8 +135,8 @@ class HapbonGUI:
             tk.messagebox.showwarning("입력 오류", "합본 출력 경로를 입력하세요.")
             return
 
-        # 설정 저장
-        save_config({k: v.get() for k, v in self.vars.items()})
+        # 설정 저장 (차수는 매번 바뀌므로 저장 제외)
+        save_config({k: v.get() for k, v in self.vars.items() if k != "round"})
 
         api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
