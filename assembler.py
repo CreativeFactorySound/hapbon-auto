@@ -24,6 +24,12 @@ SUMMARY_FG_HDR = "FFFFFF"
 SUMMARY_TOTAL_BG = "D9E1F2"
 SUMMARY_CAST_BG = "FFF2CC"
 
+# 테두리
+_THIN   = Side(style="thin",   color="BFBFBF")
+_MEDIUM = Side(style="medium", color="999999")
+_CELL_BORDER  = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
+_HDR_BORDER   = Border(left=_MEDIUM, right=_MEDIUM, top=_MEDIUM, bottom=_MEDIUM)
+
 # 탭 그룹 순서 (template_spec.md 기준)
 GROUP_ORDER = ["메인", "전투", "PV", "스킬", "캐릭터대본", "짧은음성", "음성", "스킨"]
 
@@ -88,19 +94,19 @@ def _group_sheets(processed: list[dict]) -> dict:
 
 # ── 데이터 시트 ───────────────────────────────────────────────────────────
 
-# 타입별 표준 컬럼 (ALT 있는 경우 포함)
-_BASE_COLS = ["파일명", "캐릭터명", "감정", "REC", "대사", "ALT", "옵티컬(원문)", "⏱ 검수"]
-_INFINITE_COLS = ["파일명", "캐릭터명", "감정", "ADR/Wild", "타임코드", "REC", "대사", "ALT", "옵티컬(원문)", "⏱ 검수"]
+# ALT는 항상 맨 끝에 포함 — 데이터 없으면 숨김 처리
+_BASE_COLS     = ["파일명", "캐릭터명", "감정", "REC", "대사", "옵티컬(원문)", "⏱ 검수", "ALT"]
+_INFINITE_COLS = ["파일명", "캐릭터명", "감정", "ADR/Wild", "타임코드", "REC", "대사", "옵티컬(원문)", "⏱ 검수", "ALT"]
+
+# 중요 열 강조 폰트 크기
+_FONT_LARGE = 14   # 캐릭터명, 대사, ALT
+_FONT_SMALL = 9    # 나머지
 
 
-def _get_col_list(sheet_type: str, rows: list[dict]) -> list[str]:
+def _get_col_list(sheet_type: str) -> list[str]:
     if sheet_type == "Type_무한대":
-        return _INFINITE_COLS
-    cols = list(_BASE_COLS)
-    # ALT가 모두 비어있으면 열 생략
-    if not any(r.get("ALT") for r in rows if r is not None):
-        cols = [c for c in cols if c != "ALT"]
-    return cols
+        return list(_INFINITE_COLS)
+    return list(_BASE_COLS)
 
 
 def _add_data_sheet(wb: openpyxl.Workbook, sheet_name: str, rows: list[dict], sheet_type: str):
@@ -108,7 +114,7 @@ def _add_data_sheet(wb: openpyxl.Workbook, sheet_name: str, rows: list[dict], sh
     if not rows:
         return
 
-    cols = _get_col_list(sheet_type, rows)
+    cols = _get_col_list(sheet_type)
 
     # 헤더
     _write_header(ws, cols)
@@ -117,10 +123,13 @@ def _add_data_sheet(wb: openpyxl.Workbook, sheet_name: str, rows: list[dict], sh
     for r_idx, row in enumerate(rows):
         if row is None:  # 전투 합산 구분선
             ws.append([""] * len(cols))
+            # 구분선 행에도 테두리 적용
+            for c_idx in range(1, len(cols) + 1):
+                ws.cell(row=r_idx + 2, column=c_idx).border = _CELL_BORDER
             continue
         excel_row = r_idx + 2
-        is_even = (r_idx % 2 == 0)
-        is_peak = row.get("_peak", False)
+        is_even   = (r_idx % 2 == 0)
+        is_peak   = row.get("_peak", False)
         is_timing = row.get("_timing_over", False)
 
         vals = [row.get(c, "") for c in cols]
@@ -131,16 +140,23 @@ def _add_data_sheet(wb: openpyxl.Workbook, sheet_name: str, rows: list[dict], sh
     _set_col_widths(ws, cols)
     ws.freeze_panes = "A2"
 
+    # ALT 열 데이터 없으면 숨김
+    alt_idx = cols.index("ALT") + 1  # 1-based
+    has_alt = any(r.get("ALT") for r in rows if r is not None)
+    if not has_alt:
+        ws.column_dimensions[get_column_letter(alt_idx)].hidden = True
+
 
 def _write_header(ws, cols: list[str]):
     ws.append(cols)
-    hdr_fill = PatternFill("solid", fgColor=HDR_BG)
-    hdr_font = Font(name="맑은 고딕", size=10, bold=True, color=HDR_FG)
+    hdr_fill  = PatternFill("solid", fgColor=HDR_BG)
+    hdr_font  = Font(name="맑은 고딕", size=10, bold=True, color=HDR_FG)
     hdr_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     for cell in ws[1]:
-        cell.fill = hdr_fill
-        cell.font = hdr_font
+        cell.fill      = hdr_fill
+        cell.font      = hdr_font
         cell.alignment = hdr_align
+        cell.border    = _HDR_BORDER
     ws.row_dimensions[1].height = 25
 
 
@@ -150,32 +166,36 @@ def _format_data_row(ws, row_idx: int, cols: list[str], is_even: bool, is_peak: 
         base_bg = TIMING_BG
 
     col_bg = {
-        "파일명": base_bg,
-        "캐릭터명": CHAR_BG,
-        "감정": EMO_BG,
-        "REC": REC_BG,
-        "대사": DIAL_BG,
-        "ALT": DIAL_BG,
+        "파일명":    base_bg,
+        "캐릭터명":  CHAR_BG,
+        "감정":      EMO_BG,
+        "REC":       REC_BG,
+        "대사":      DIAL_BG,
+        "ALT":       DIAL_BG,
         "옵티컬(원문)": base_bg,
-        "⏱ 검수": base_bg,
-        "ADR/Wild": EMO_BG,
-        "타임코드": base_bg,
+        "⏱ 검수":   base_bg,
+        "ADR/Wild":  EMO_BG,
+        "타임코드":  base_bg,
     }
 
     for c_idx, col_name in enumerate(cols, 1):
         cell = ws.cell(row=row_idx, column=c_idx)
-        bg = col_bg.get(col_name, base_bg)
-        cell.fill = PatternFill("solid", fgColor=bg)
-        cell.alignment = Alignment(wrap_text=True, vertical="top")
+        bg   = col_bg.get(col_name, base_bg)
 
-        # 폰트
-        is_char = col_name == "캐릭터명"
-        is_dial = col_name in ("대사", "ALT")
+        cell.fill      = PatternFill("solid", fgColor=bg)
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+        cell.border    = _CELL_BORDER
+
+        # 폰트 — 캐릭터명·대사·ALT는 14pt Bold
+        is_char  = col_name == "캐릭터명"
+        is_dial  = col_name in ("대사", "ALT")
+        is_large = is_char or is_dial
         font_color = PEAK_FG if (is_peak and is_dial) else "000000"
+
         cell.font = Font(
             name="맑은 고딕",
-            size=9,
-            bold=is_char,
+            size=_FONT_LARGE if is_large else _FONT_SMALL,
+            bold=is_large,
             color=font_color,
             italic=(col_name == "캐릭터명" and str(cell.value) == "내레이션"),
         )
@@ -183,16 +203,16 @@ def _format_data_row(ws, row_idx: int, cols: list[str], is_even: bool, is_peak: 
 
 def _set_col_widths(ws, cols: list[str]):
     widths = {
-        "파일명": 40,
-        "캐릭터명": 14,
-        "감정": 22,
-        "REC": 5,
-        "대사": 55,
-        "ALT": 45,
+        "파일명":       40,
+        "캐릭터명":     16,
+        "감정":         22,
+        "REC":          5,
+        "대사":         55,
+        "ALT":          45,
         "옵티컬(원문)": 45,
-        "⏱ 검수": 18,
-        "ADR/Wild": 10,
-        "타임코드": 26,
+        "⏱ 검수":      18,
+        "ADR/Wild":     10,
+        "타임코드":     26,
     }
     for i, col in enumerate(cols, 1):
         ws.column_dimensions[get_column_letter(i)].width = widths.get(col, 15)
@@ -247,9 +267,10 @@ def _add_summary_sheet(wb: openpyxl.Workbook, all_sheet_data: list[tuple]):
     hdr_fill = PatternFill("solid", fgColor=SUMMARY_BG_HDR)
     hdr_font = Font(name="맑은 고딕", size=10, bold=True, color=SUMMARY_FG_HDR)
     for cell in ws[1]:
-        cell.fill = hdr_fill
-        cell.font = hdr_font
+        cell.fill      = hdr_fill
+        cell.font      = hdr_font
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border    = _HDR_BORDER
     ws.row_dimensions[1].height = 28
 
     # 캐릭터별 행 (합계 내림차순)
@@ -262,10 +283,10 @@ def _add_summary_sheet(wb: openpyxl.Workbook, all_sheet_data: list[tuple]):
         total = sum(tab_map.values())
         row_vals = [char, ""] + [tab_map.get(t, "") or "" for t in tab_names] + [total]
         ws.append(row_vals)
-        # 스타일
         for c_idx, val in enumerate(row_vals, 1):
             cell = ws.cell(row=r_idx, column=c_idx)
             col_name = header[c_idx - 1]
+            cell.border = _CELL_BORDER
             if col_name == "캐릭터명":
                 cell.font = Font(name="맑은 고딕", size=9, bold=True)
             elif col_name == "성우명":
@@ -295,9 +316,10 @@ def _add_log_sheet(wb: openpyxl.Workbook, log_entries: list[dict]):
     hdr_fill = PatternFill("solid", fgColor=HDR_BG)
     hdr_font = Font(name="맑은 고딕", size=10, bold=True, color=HDR_FG)
     for cell in ws[1]:
-        cell.fill = hdr_fill
-        cell.font = hdr_font
+        cell.fill      = hdr_fill
+        cell.font      = hdr_font
         cell.alignment = Alignment(horizontal="center")
+        cell.border    = _HDR_BORDER
     for entry in log_entries:
         ws.append([entry.get("file", ""), entry.get("sheet", ""), entry.get("reason", "")])
     ws.column_dimensions["A"].width = 50
@@ -310,7 +332,7 @@ def _add_log_sheet(wb: openpyxl.Workbook, log_entries: list[dict]):
 def _reorder_sheets(wb: openpyxl.Workbook):
     names = wb.sheetnames
     front = []
-    back = []
+    back  = []
     for n in names:
         if n in ("개괄", "로그"):
             front.append(n)
