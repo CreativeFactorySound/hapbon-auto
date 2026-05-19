@@ -12,6 +12,9 @@ test_output/
 # 분류 캐시 (로컬 전용)
 .hapbon_cls_cache.json
 
+# GUI 마지막 설정 저장 (로컬 전용)
+.hapbon_gui_config.json
+
 # API 키 등 환경변수 파일
 .env
 *.env
