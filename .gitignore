@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# 테스트 출력물 (합본 결과 xlsx)
+test_output/
+
+# 분류 캐시 (로컬 전용)
+.hapbon_cls_cache.json
+
+# API 키 등 환경변수 파일
+.env
+*.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 엑셀 임시파일
+~$*.xlsx
