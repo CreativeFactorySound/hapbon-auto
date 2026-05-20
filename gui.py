@@ -149,6 +149,13 @@ class HapbonGUI:
         if not output:
             tk.messagebox.showwarning("입력 오류", "합본 출력 경로를 입력하세요.")
             return
+        # 폴더 경로만 입력된 경우 자동으로 파일명 보정
+        if Path(output).is_dir() or not output.lower().endswith(".xlsx"):
+            proj = project
+            rnd  = self.vars["round"].get().strip()
+            stem = f"{proj}_{rnd}_합본.xlsx".strip("_")
+            output = str(Path(output) / stem) if Path(output).is_dir() else output + ".xlsx"
+            self.vars["output"].set(output)
 
         # 설정 저장 (차수 제외)
         save_config({k: v.get() for k, v in self.vars.items() if k != "round"})

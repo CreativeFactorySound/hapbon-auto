@@ -237,8 +237,16 @@ def main():
     # 4. 조립
     print(f"\n[조립] 합본 생성 중...")
     processed = _deduplicate_sheet_names(processed)
-    os.makedirs(Path(args.output).parent, exist_ok=True)
-    build_hapbon(processed, log_entries, project_title, args.output, args.optical)
+    # 출력 경로 보정: 폴더이거나 .xlsx 없으면 자동 수정
+    output = args.output
+    if Path(output).is_dir():
+        stem = f"{project_title}_합본.xlsx".replace(" ", "_")
+        output = str(Path(output) / stem)
+    elif not output.lower().endswith(".xlsx"):
+        output += ".xlsx"
+    os.makedirs(Path(output).parent, exist_ok=True)
+    build_hapbon(processed, log_entries, project_title, output, args.optical)
+    print(f"[완료] {output}\n")
     print(f"[완료] {args.output}\n")
 
 
