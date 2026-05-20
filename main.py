@@ -327,9 +327,8 @@ def _log(log_entries: list, file: str, sheet: str, reason: str):
 
 
 def _make_sheet_name(fname: str, sname: str, cls: dict) -> str:
-    """출력 시트명 결정."""
+    """출력 시트명 결정. 타입 라벨은 절대 붙이지 않음 — 파일명/시트명 기반으로만."""
     char_name = cls.get("char_name_kr") or ""
-    sheet_type = cls.get("type", "")
 
     def strip_cn(s: str) -> str:
         s = re.sub(r"[一-鿿㐀-䶿豈-﫿]+", "", s)  # 중국어 한자만 제거 (히라가나·가타카나 유지)
@@ -337,32 +336,36 @@ def _make_sheet_name(fname: str, sname: str, cls: dict) -> str:
         s = re.sub(r"[_\-\s.]+", "_", s).strip("_").strip()
         return s
 
-    type_labels = {
-        "Type_메인": "메인", "Type_PV": "버전PV", "Type_전투": "전투",
-        "Type_캐릭터음성": "음성", "Type_짧은음성": "짧은음성", "Type_무한대": "무한대",
-    }
-
     if re.fullmatch(r"Sheet\d*", sname, re.IGNORECASE):
-        stem = strip_cn(Path(fname).stem)
+        # Sheet1 등 의미 없는 시트명 → 파일명 줄기에서 추출
+        raw_stem = Path(fname).stem
+        jp_words = re.findall(r"[ぁ-ヿ]{2,}", raw_stem)  # 히라가나/가타카나 (strip_cn 전에)
+        stem = strip_cn(raw_stem)
         kr_words = re.findall(r"[가-힣]{2,}", stem)
         en_parts = [p for p in re.findall(r"[A-Za-z]{3,}", stem) if p.lower() not in ("ver", "the", "for")]
         if kr_words:
             cleaned = "_".join(kr_words[:2])
+        elif jp_words:
+            cleaned = "_".join(jp_words[:2])
         elif en_parts:
             cleaned = "_".join(en_parts[:2])
         else:
-            cleaned = type_labels.get(sheet_type, "시트")
+            cleaned = stem[:16] or "시트"
     else:
         cleaned = strip_cn(sname)
         if not cleaned:
-            cleaned = type_labels.get(sheet_type, "시트")
+            # 시트명이 순수 한자/숫자 등으로만 돼 있어 비어버린 경우 → 파일명 줄기 사용
+            stem = strip_cn(Path(fname).stem)
+            kr_words = re.findall(r"[가-힣]{2,}", stem)
+            en_parts = [p for p in re.findall(r"[A-Za-z]{3,}", stem) if p.lower() not in ("ver", "the", "for")]
+            cleaned = kr_words[0] if kr_words else (en_parts[0] if en_parts else stem[:16] or "시트")
 
     if char_name and char_name not in cleaned:
         cleaned = f"{char_name}_{cleaned}"
 
     # 한글·영문·일본어(히라가나/가타카나/한자) 중 하나라도 있으면 유효
-    if not re.search(r"[가-힣a-zA-Zぁあァアぁ-ヿ一-鿿]", cleaned):
-        cleaned = type_labels.get(sheet_type, "기타")
+    if not re.search(r"[가-힣a-zA-Zぁ-ヿ一-鿿]", cleaned):
+        cleaned = strip_cn(Path(fname).stem)[:16] or "시트"
 
     cleaned = re.sub(r"[:/\?*\[\]]", "", cleaned)
     return cleaned[:31]

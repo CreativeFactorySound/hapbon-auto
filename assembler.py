@@ -57,6 +57,8 @@ def build_hapbon(
     # 그룹별 정렬
     grouped = _group_sheets(processed)
 
+    no_optical = (optical_lang == "NONE")
+
     # 데이터 시트 추가
     all_sheet_data = []  # [(sheet_name, rows)] — 개괄 집계용
     for group in GROUP_ORDER:
@@ -66,7 +68,7 @@ def build_hapbon(
                 _add_arknights_sheet(wb, item)
             else:
                 rows = item.get("rows") or []
-                _add_data_sheet(wb, sname, rows, item["type"], images=item.get("images"))
+                _add_data_sheet(wb, sname, rows, item["type"], images=item.get("images"), no_optical=no_optical)
                 all_sheet_data.append((sname, rows, item["type"]))
 
     # 개괄 시트 (맨 앞)
@@ -94,28 +96,31 @@ def _group_sheets(processed: list[dict]) -> dict:
 
 # ── 데이터 시트 ───────────────────────────────────────────────────────────
 
-# ALT는 항상 맨 끝에 포함 — 데이터 없으면 숨김 처리
-_BASE_COLS     = ["파일명", "캐릭터명", "감정", "REC", "대사", "옵티컬(원문)", "⏱ 검수", "ALT"]
-_INFINITE_COLS = ["파일명", "캐릭터명", "감정", "ADR/Wild", "타임코드", "REC", "대사", "옵티컬(원문)", "⏱ 검수", "ALT"]
+# ALT는 항상 포함 (숨김 처리 없음)
+# 옵티컬(원문)·⏱ 검수는 optical_lang == "NONE"이면 제외
+_BASE_COLS          = ["파일명", "캐릭터명", "감정", "REC", "대사", "옵티컬(원문)", "⏱ 검수", "ALT"]
+_BASE_COLS_NO_OPT   = ["파일명", "캐릭터명", "감정", "REC", "대사", "ALT"]
+_INFINITE_COLS      = ["파일명", "캐릭터명", "감정", "ADR/Wild", "타임코드", "REC", "대사", "옵티컬(원문)", "⏱ 검수", "ALT"]
+_INFINITE_COLS_NO_OPT = ["파일명", "캐릭터명", "감정", "ADR/Wild", "타임코드", "REC", "대사", "ALT"]
 
 # 중요 열 강조 폰트 크기
 _FONT_LARGE = 14   # 캐릭터명, 대사, ALT
 _FONT_SMALL = 9    # 나머지
 
 
-def _get_col_list(sheet_type: str) -> list[str]:
+def _get_col_list(sheet_type: str, no_optical: bool = False) -> list[str]:
     if sheet_type == "Type_무한대":
-        return list(_INFINITE_COLS)
-    return list(_BASE_COLS)
+        return list(_INFINITE_COLS_NO_OPT if no_optical else _INFINITE_COLS)
+    return list(_BASE_COLS_NO_OPT if no_optical else _BASE_COLS)
 
 
 def _add_data_sheet(wb: openpyxl.Workbook, sheet_name: str, rows: list[dict], sheet_type: str,
-                    images: list | None = None):
+                    images: list | None = None, no_optical: bool = False):
     ws = wb.create_sheet(title=sheet_name)
     if not rows:
         return
 
-    cols = _get_col_list(sheet_type)
+    cols = _get_col_list(sheet_type, no_optical=no_optical)
 
     # 헤더
     _write_header(ws, cols)
@@ -140,12 +145,6 @@ def _add_data_sheet(wb: openpyxl.Workbook, sheet_name: str, rows: list[dict], sh
 
     _set_col_widths(ws, cols)
     ws.freeze_panes = "A2"
-
-    # ALT 열 데이터 없으면 숨김
-    alt_idx = cols.index("ALT") + 1  # 1-based
-    has_alt = any(r.get("ALT") for r in rows if r is not None)
-    if not has_alt:
-        ws.column_dimensions[get_column_letter(alt_idx)].hidden = True
 
     # 이미지 삽입 (Type_짧은음성 등)
     if images:
