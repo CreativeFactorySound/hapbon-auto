@@ -85,10 +85,10 @@ def main():
                 pass
 
             preview = _load_preview(wb[sname], 15)
-            # 한국어 빠른 체크
-            if not _has_korean(preview):
-                print(f"  [{sname}] 한국어 없음 → 스킵")
-                _log(log_entries, fpath.name, sname, "한국어 대사 없음")
+            # 녹음 언어 빠른 체크
+            if not _has_record_lang(preview, args.record):
+                print(f"  [{sname}] 녹음 언어({args.record}) 없음 → 스킵")
+                _log(log_entries, fpath.name, sname, f"녹음 언어({args.record}) 대사 없음")
                 continue
 
             ckey = _cache_key(fpath.name, sname)
@@ -292,10 +292,18 @@ def _load_preview(ws, max_rows: int = 15) -> list[list]:
     return rows
 
 
-def _has_korean(preview: list[list]) -> bool:
+def _has_record_lang(preview: list[list], record: str) -> bool:
+    """녹음 언어에 해당하는 텍스트가 시트 미리보기에 존재하는지 확인."""
     for row in preview:
         for cell in row:
-            if cell and any("가" <= c <= "힣" for c in str(cell)):
+            if not cell:
+                continue
+            s = str(cell)
+            if record == "KR" and any("가" <= c <= "힣" for c in s):
+                return True
+            elif record == "JP" and any("ぁ" <= c <= "ん" or "ァ" <= c <= "ン" for c in s):
+                return True
+            elif record == "EN" and re.search(r"[A-Za-z]{5,}", s):
                 return True
     return False
 
