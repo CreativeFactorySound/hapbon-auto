@@ -162,6 +162,9 @@ _HEADER_CHAR_VALUES  = {"캐릭터", "配音对象", "角色", "キャラ", "キ
 _HEADER_DIAL_VALUES  = {"라인", "对话文本", "终选语音", "台詞", "テキスト", "Line", "LINE", "Dialogue", "DIALOGUE", "Text"}
 _HEADER_FILE_VALUES  = {"语音命名", "台詞番号", "ボイス名", "Filename", "File Name", "FILENAME"}
 
+# 녹음 불필요 행 감지용 — 이 값이 포함된 행은 스킵
+_SKIP_ROW_KEYWORDS = {"无需配音", "怪物音效", "不需配音", "无配音"}
+
 
 # ── Type_메인 ──────────────────────────────────────────────────────────────
 
@@ -198,6 +201,17 @@ def _extract_main(ws, cls: dict) -> list[dict]:
 
         # 스킵: 씬 타입이 skip_steps에 해당
         if step and step in skip_steps:
+            continue
+
+        # 스킵: 헤더 반복 행
+        if char_kr in _HEADER_CHAR_VALUES or char_cn in _HEADER_CHAR_VALUES:
+            continue
+        if dialogue_kr in _HEADER_DIAL_VALUES or dialogue_cn in _HEADER_DIAL_VALUES:
+            continue
+
+        # 스킵: 无需配音 등 녹음 불필요 표기 행
+        row_text = " ".join(str(v) for v in row_vals if v is not None)
+        if any(kw in row_text for kw in _SKIP_ROW_KEYWORDS):
             continue
 
         # 스킵: 파일명도 없고 대사도 없고 캐릭터도 없는 완전 빈 행
@@ -327,6 +341,11 @@ def _extract_battle(ws, cls: dict) -> list[dict]:
         if char_kr in _HEADER_CHAR_VALUES or char_cn in _HEADER_CHAR_VALUES:
             continue
         if dialogue_kr in _HEADER_DIAL_VALUES or dialogue_cn in _HEADER_DIAL_VALUES:
+            continue
+
+        # 스킵: 无需配音/怪物音効 등 녹음 불필요 표기 행
+        row_text = " ".join(str(v) for v in row_vals if v is not None)
+        if any(kw in row_text for kw in _SKIP_ROW_KEYWORDS):
             continue
 
         # 완전 빈 행 스킵
