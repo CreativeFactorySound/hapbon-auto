@@ -122,15 +122,27 @@ def _add_data_sheet(wb: openpyxl.Workbook, sheet_name: str, rows: list[dict], sh
 
     cols = _get_col_list(sheet_type, no_optical=no_optical)
 
+    # 원본 열 보존: 모든 행의 _extra_cols 키를 순서 유지하며 수집
+    extra_col_names: list[str] = []
+    seen_extra: set[str] = set()
+    for row in rows:
+        if row is None:
+            continue
+        for k in (row.get("_extra_cols") or {}):
+            if k not in seen_extra:
+                extra_col_names.append(k)
+                seen_extra.add(k)
+
+    all_cols = cols + extra_col_names
+
     # 헤더
-    _write_header(ws, cols)
+    _write_header(ws, all_cols)
 
     # 데이터 행
     for r_idx, row in enumerate(rows):
         if row is None:  # 전투 합산 구분선
-            ws.append([""] * len(cols))
-            # 구분선 행에도 테두리 적용
-            for c_idx in range(1, len(cols) + 1):
+            ws.append([""] * len(all_cols))
+            for c_idx in range(1, len(all_cols) + 1):
                 ws.cell(row=r_idx + 2, column=c_idx).border = _CELL_BORDER
             continue
         excel_row = r_idx + 2
@@ -138,13 +150,18 @@ def _add_data_sheet(wb: openpyxl.Workbook, sheet_name: str, rows: list[dict], sh
         is_peak   = row.get("_peak", False)
         is_timing = row.get("_timing_over", False)
 
-        vals = [row.get(c, "") for c in cols]
+        extra_dict = row.get("_extra_cols") or {}
+        vals = [row.get(c, "") for c in cols] + [extra_dict.get(c, "") for c in extra_col_names]
         ws.append(vals)
 
-        _format_data_row(ws, excel_row, cols, is_even, is_peak, is_timing)
+        _format_data_row(ws, excel_row, all_cols, is_even, is_peak, is_timing)
 
-    _set_col_widths(ws, cols)
+    _set_col_widths(ws, all_cols)
     ws.freeze_panes = "A2"
+
+    # 원본 열(extra) 숨김 처리
+    for i in range(len(cols) + 1, len(all_cols) + 1):
+        ws.column_dimensions[get_column_letter(i)].hidden = True
 
     # 이미지 삽입 (Type_짧은음성 등)
     if images:

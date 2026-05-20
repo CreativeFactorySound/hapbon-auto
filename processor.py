@@ -117,6 +117,33 @@ def _ws_rows(ws, header_row: int) -> list[list]:
     return rows
 
 
+def _get_header(ws, header_row: int) -> list[str]:
+    """헤더 행 값을 문자열 리스트로 반환."""
+    for i, row in enumerate(ws.iter_rows(values_only=True)):
+        if i == header_row:
+            return [str(v).strip() if v is not None else "" for v in row]
+    return []
+
+
+def _collect_extra(row_vals: list, used: set, header: list) -> dict:
+    """표준 매핑에 사용되지 않은 열의 값을 {헤더명: 값} 딕셔너리로 반환.
+    값이 있는 열만 포함하며, 동일 헤더명 중복 시 _{col번호} 접미사로 구분."""
+    extra: dict[str, str] = {}
+    seen_headers: dict[str, int] = {}
+    for i, v in enumerate(row_vals):
+        if i in used:
+            continue
+        val_str = str(v).strip() if v is not None else ""
+        if not val_str:
+            continue
+        h = header[i] if i < len(header) and header[i] else f"열{i + 1}"
+        if h in seen_headers:
+            h = f"{h}_{i + 1}"
+        seen_headers[h] = i
+        extra[h] = val_str
+    return extra
+
+
 # 내레이션 스텝값 — 여기 포함된 값은 모두 "내레이션"으로 정규화
 _NARRATION_STEPS = {
     "旁白",          # CN
@@ -152,6 +179,9 @@ def _extract_main(ws, cls: dict) -> list[dict]:
     alt = cls.get("col_alt", -1)
     step_col = cls.get("col_step_type", -1)
     skip_steps = set(cls.get("skip_step_values", []))
+
+    used    = {c for c in [cf, ckr, ckn, ekr, ecn, dkr, dcn, opt, alt, step_col] if c >= 0}
+    header  = _get_header(ws, header_row)
 
     result = []
     for row_vals in _ws_rows(ws, header_row):
@@ -195,6 +225,7 @@ def _extract_main(ws, cls: dict) -> list[dict]:
             "옵티컬(원문)": optical or dialogue_cn or "",
             "⏱ 검수": "",
             "_peak": _is_peak(dialogue_kr or "", record),
+            "_extra_cols": _collect_extra(row_vals, used, header),
         })
     return result
 
@@ -213,6 +244,9 @@ def _extract_pv(ws, cls: dict) -> list[dict]:
     opt = cls.get("col_optical", -1)
     alt = cls.get("col_alt", -1)
     dur = cls.get("col_duration", -1)
+
+    used   = {c for c in [ckr, ckn, ekr, ecn, dkr, dcn, opt, alt, dur] if c >= 0}
+    header = _get_header(ws, header_row)
 
     result = []
     for row_vals in _ws_rows(ws, header_row):
@@ -248,6 +282,7 @@ def _extract_pv(ws, cls: dict) -> list[dict]:
             "⏱ 검수": timing,
             "_peak": _is_peak(dialogue_kr or "", record),
             "_timing_over": bool(timing),
+            "_extra_cols": _collect_extra(row_vals, used, header),
         })
     return result
 
@@ -267,6 +302,9 @@ def _extract_battle(ws, cls: dict) -> list[dict]:
     opt = cls.get("col_optical", -1)
     alt = cls.get("col_alt", -1)
     process_col = cls.get("col_step_type", -1)  # 流程节点
+
+    used   = {c for c in [cf, ckr, ckn, ekr, ecn, dkr, dcn, opt, alt, process_col] if c >= 0}
+    header = _get_header(ws, header_row)
 
     result = []
     for row_vals in _ws_rows(ws, header_row):
@@ -306,6 +344,7 @@ def _extract_battle(ws, cls: dict) -> list[dict]:
             "옵티컬(원문)": optical or dialogue_cn or "",
             "⏱ 검수": "",
             "_peak": _is_peak(dialogue_kr or "", record),
+            "_extra_cols": _collect_extra(row_vals, used, header),
         })
     return result
 
@@ -324,6 +363,9 @@ def _extract_chara(ws, cls: dict) -> list[dict]:
     opt = cls.get("col_optical", -1)
     alt = cls.get("col_alt", -1)
     func_col = cls.get("col_functional", -1)
+
+    used   = {c for c in [cf, ekr, ecn, dkr, dcn, opt, alt, func_col] if c >= 0}
+    header = _get_header(ws, header_row)
 
     result = []
     for row_vals in _ws_rows(ws, header_row):
@@ -362,6 +404,7 @@ def _extract_chara(ws, cls: dict) -> list[dict]:
             "옵티컬(원문)": optical or dialogue_cn or "",
             "⏱ 검수": "",
             "_peak": _is_peak(dialogue_kr or "", record),
+            "_extra_cols": _collect_extra(row_vals, used, header),
         })
     return result
 
@@ -384,6 +427,7 @@ def _extract_short(ws, cls: dict) -> list[dict]:
     dkr = cls.get("col_dialogue_kr", -1)
     dcn = cls.get("col_dialogue_cn", -1)
     opt = cls.get("col_optical",     -1)
+    alt = cls.get("col_alt",         -1)
 
     # 모든 열의 병합셀 값 맵: (row_0based, col_0based) → 값
     merged_map: dict[tuple[int, int], str] = {}
@@ -406,6 +450,9 @@ def _extract_short(ws, cls: dict) -> list[dict]:
             return mv or None   # 빈 문자열은 None으로
         return _cell(row_vals, col_0)
 
+    used   = {c for c in [cf, ckr, ckn, ekr, ecn, dkr, dcn, opt, alt] if c >= 0}
+    header = _get_header(ws, header_row)
+
     result = []
     all_rows = list(ws.iter_rows(values_only=True))
     for i, row_vals in enumerate(all_rows):
@@ -421,6 +468,7 @@ def _extract_short(ws, cls: dict) -> list[dict]:
         dialogue_kr = _mv(row_vals, i, dkr)
         dialogue_cn = _mv(row_vals, i, dcn)
         optical     = _mv(row_vals, i, opt)
+        alt_val     = _mv(row_vals, i, alt)
 
         # 대사 없는 행 스킵
         if not dialogue_kr and not dialogue_cn:
@@ -439,10 +487,11 @@ def _extract_short(ws, cls: dict) -> list[dict]:
             "감정":         emotion,
             "REC":          "",
             "대사":         dialogue_kr or "",
-            "ALT":          "",
+            "ALT":          alt_val or "",
             "옵티컬(원문)": optical or dialogue_cn or "",
             "⏱ 검수":      "",
             "_peak":        _is_peak(dialogue_kr or "", record),
+            "_extra_cols":  _collect_extra(row_vals, used, header),
         })
     return result
 
@@ -474,6 +523,9 @@ def _extract_infinite(ws, cls: dict) -> list[dict]:
             if v and any(kw in str(v) for kw in _REC_KEYWORDS):
                 rec_col = j
                 break
+
+    used   = {c for c in [cf, ckr, ckn, dkr, dcn, opt, adr_col, tc_col, rec_col] if c >= 0}
+    header = _get_header(ws, header_row)
 
     result = []
     for row_vals in _ws_rows(ws, header_row):
@@ -515,6 +567,7 @@ def _extract_infinite(ws, cls: dict) -> list[dict]:
             "⏱ 검수": timing,
             "_peak": _is_peak(dialogue_kr or ""),
             "_timing_over": bool(timing),
+            "_extra_cols": _collect_extra(row_vals, used, header),
         })
     return result
 
