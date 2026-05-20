@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, scrolledtext
 import json
 import os
+import io
 import subprocess
 import sys
 import threading
@@ -23,6 +24,21 @@ def load_config() -> dict:
 
 def save_config(cfg: dict):
     CONFIG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+# ── exe 내부 CLI 모드 (GUI가 subprocess로 자기 자신을 호출할 때 진입) ──────
+# PyInstaller exe에서 sys.executable은 exe 자신이므로,
+# --_cli 플래그로 GUI 모드와 처리 모드를 구분한다.
+def _run_as_cli():
+    """--_cli 플래그로 실행됐을 때: GUI 없이 main 파이프라인만 실행."""
+    sys.argv.remove("--_cli")
+    # UTF-8 출력 보장
+    if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    if sys.stderr.encoding and sys.stderr.encoding.lower() not in ("utf-8", "utf8"):
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    from main import main
+    main()
 
 
 class HapbonGUI:
@@ -51,8 +67,8 @@ class HapbonGUI:
         self.vars["project"] = tk.StringVar(value=cfg.get("project", ""))
         ttk.Entry(frame, textvariable=self.vars["project"], width=36).grid(row=0, column=1, columnspan=2, sticky="ew", padx=(6, 0))
 
-        # 차수
-        self.vars["round"] = tk.StringVar(value=cfg.get("round", ""))
+        # 차수 (저장 안 함 — 매번 직접 입력)
+        self.vars["round"] = tk.StringVar(value="")
         ttk.Entry(frame, textvariable=self.vars["round"], width=36).grid(row=1, column=1, columnspan=2, sticky="ew", padx=(6, 0))
 
         # 옵티컬 언어
@@ -94,7 +110,6 @@ class HapbonGUI:
         path = filedialog.askdirectory(title="원본 대본 폴더 선택")
         if path:
             self.vars["source"].set(path)
-            # 출력 경로 자동 제안
             if not self.vars["output"].get():
                 proj = self.vars["project"].get() or "합본"
                 rnd = self.vars["round"].get() or ""
@@ -135,7 +150,7 @@ class HapbonGUI:
             tk.messagebox.showwarning("입력 오류", "합본 출력 경로를 입력하세요.")
             return
 
-        # 설정 저장 (차수는 매번 바뀌므로 저장 제외)
+        # 설정 저장 (차수 제외)
         save_config({k: v.get() for k, v in self.vars.items() if k != "round"})
 
         api_key = os.environ.get("GEMINI_API_KEY", "")
@@ -144,9 +159,15 @@ class HapbonGUI:
             if not api_key:
                 return
 
-        cmd = [
-            sys.executable, "-X", "utf8",
-            str(Path(__file__).parent / "main.py"),
+        # exe 여부에 따라 실행 커맨드 구성
+        # - 일반 Python: python -X utf8 main.py ...
+        # - exe: 합본자동화.exe --_cli ... (GUI 재진입 방지)
+        if getattr(sys, "frozen", False):
+            cmd = [sys.executable, "--_cli"]
+        else:
+            cmd = [sys.executable, "-X", "utf8", str(Path(__file__).parent / "main.py")]
+
+        cmd += [
             "--source",  source,
             "--output",  output,
             "--project", project,
@@ -186,13 +207,16 @@ class HapbonGUI:
 
 
 def main():
-    root = tk.Tk()
-    # 기본 다이얼로그용 모듈 임포트
     import tkinter.messagebox
     import tkinter.simpledialog
+    root = tk.Tk()
     app = HapbonGUI(root)
     root.mainloop()
 
 
 if __name__ == "__main__":
-    main()
+    # exe로 실행됐고 --_cli 플래그가 있으면 → GUI 없이 파이프라인만 실행
+    if getattr(sys, "frozen", False) and "--_cli" in sys.argv:
+        _run_as_cli()
+    else:
+        main()
