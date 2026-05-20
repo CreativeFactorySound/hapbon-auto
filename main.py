@@ -21,7 +21,7 @@ if sys.stderr.encoding and sys.stderr.encoding.lower() not in ("utf-8", "utf8"):
 import openpyxl
 
 from gemini_client import GeminiClient
-from processor import process_sheet
+from processor import process_sheet, extract_images_for_sheet
 from assembler import build_hapbon
 
 
@@ -91,7 +91,7 @@ def main():
                 _log(log_entries, fpath.name, sname, f"녹음 언어({args.record}) 대사 없음")
                 continue
 
-            ckey = _cache_key(fpath.name, sname)
+            ckey = _cache_key(fpath.name, sname, args.optical, args.record)
             if ckey in _cache:
                 cls = _cache[ckey]
                 print(f"  [{sname}] (캐시) {cls['type']}")
@@ -126,6 +126,10 @@ def main():
         wb.close()
 
     print(f"\n[분류 완료] {len(classifications)}개 시트 처리 예정\n")
+
+    # 녹음 언어를 cls에 주입 (processor 함수들이 언어별 처리에 사용)
+    for item in classifications:
+        item["cls"] = {**item["cls"], "_record": args.record}
 
     # 3. 처리
     processed = []
@@ -197,14 +201,17 @@ def main():
                 rows = process_sheet(ws, cls)
                 wb.close()
                 out_name = _make_sheet_name(fname, sname, cls)
+                images = extract_images_for_sheet(fpath, sname, cls)
                 processed.append({
                     "sheet_name_out": out_name,
                     "type": t,
                     "rows": rows,
                     "source_file": fname,
                     "cls": cls,
+                    "images": images,
                 })
-                print(f"→ {len(rows)}행")
+                img_note = f" + 이미지 {len(images)}개" if images else ""
+                print(f"→ {len(rows)}행{img_note}")
 
             else:
                 wb = openpyxl.load_workbook(fpath, data_only=True, read_only=True)
@@ -247,7 +254,6 @@ def main():
     os.makedirs(Path(output).parent, exist_ok=True)
     build_hapbon(processed, log_entries, project_title, output, args.optical)
     print(f"[완료] {output}\n")
-    print(f"[완료] {args.output}\n")
 
 
 # ── 헬퍼 ─────────────────────────────────────────────────────────────────
@@ -311,7 +317,7 @@ def _has_record_lang(preview: list[list], record: str) -> bool:
                 return True
             elif record == "JP" and any("ぁ" <= c <= "ん" or "ァ" <= c <= "ン" for c in s):
                 return True
-            elif record == "EN" and re.search(r"[A-Za-z]{5,}", s):
+            elif record == "EN" and re.search(r"[A-Za-z]{2,}", s):
                 return True
     return False
 
@@ -326,7 +332,7 @@ def _make_sheet_name(fname: str, sname: str, cls: dict) -> str:
     sheet_type = cls.get("type", "")
 
     def strip_cn(s: str) -> str:
-        s = re.sub(r"[一-鿿㐀-䶿豈-﫿぀-ヿ]+", "", s)
+        s = re.sub(r"[一-鿿㐀-䶿豈-﫿]+", "", s)  # 중국어 한자만 제거 (히라가나·가타카나 유지)
         s = re.sub(r"\b\d{6,}\b", "", s)
         s = re.sub(r"[_\-\s.]+", "_", s).strip("_").strip()
         return s
@@ -354,7 +360,8 @@ def _make_sheet_name(fname: str, sname: str, cls: dict) -> str:
     if char_name and char_name not in cleaned:
         cleaned = f"{char_name}_{cleaned}"
 
-    if not re.search(r"[가-힣a-zA-Z]", cleaned):
+    # 한글·영문·일본어(히라가나/가타카나/한자) 중 하나라도 있으면 유효
+    if not re.search(r"[가-힣a-zA-Zぁあァアぁ-ヿ一-鿿]", cleaned):
         cleaned = type_labels.get(sheet_type, "기타")
 
     cleaned = re.sub(r"[:/\?*\[\]]", "", cleaned)
@@ -372,8 +379,8 @@ def _init_cache(output_path: str):
     from pathlib import Path
     _CACHE_FILE = Path(output_path).parent / ".hapbon_cls_cache.json"
 
-def _cache_key(fname: str, sname: str) -> str:
-    return hashlib.md5(f"{fname}||{sname}".encode()).hexdigest()
+def _cache_key(fname: str, sname: str, optical: str = "", record: str = "") -> str:
+    return hashlib.md5(f"{fname}||{sname}||{optical}||{record}".encode()).hexdigest()
 
 def _load_cache() -> dict:
     if _CACHE_FILE and _CACHE_FILE.exists():

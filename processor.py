@@ -1,6 +1,9 @@
 """타입별 시트 데이터 추출."""
 
+import io as _io
 import re
+import zipfile as _zipfile
+from xml.etree import ElementTree as _ET
 import openpyxl
 
 
@@ -33,12 +36,6 @@ def _cell(row_vals: list, idx: int):
     return str(v).strip() if v is not None else None
 
 
-def _has_korean(text) -> bool:
-    if not text:
-        return False
-    return any("가" <= c <= "힣" for c in str(text))
-
-
 def _est_sec_kr(text: str) -> float:
     """한국어 글자 수로 예상 녹음 시간(초) 추정."""
     if not text:
@@ -50,6 +47,19 @@ def _est_sec_en(text: str) -> float:
     if not text:
         return 0.0
     return len(str(text).split()) / 2.5
+
+
+def _est_sec_jp(text: str) -> float:
+    """일본어 글자 수로 예상 녹음 시간(초) 추정 (히라가나/가타카나 1모라, 한자 2모라 기준 5.5모라/초)."""
+    if not text:
+        return 0.0
+    morae = 0
+    for c in text:
+        if "ぁ" <= c <= "ん" or "ァ" <= c <= "ン":   # 히라가나/가타카나
+            morae += 1
+        elif "一" <= c <= "鿿" or "㐀" <= c <= "䶿":  # 한자
+            morae += 2
+    return morae / 5.5 if morae else len(text.split()) / 2.5
 
 
 def _parse_duration(s) -> float | None:
@@ -67,19 +77,32 @@ def _parse_duration(s) -> float | None:
     return None
 
 
-def _is_peak(text: str) -> bool:
+_PEAK_WORDS: dict[str, list[str]] = {
+    "KR": ["비명", "기합", "으아", "절규", "소리치", "폭발", "외치", "포효",
+           "분노", "열받", "살려", "싫어", "제발", "도망", "그만", "아악", "으윽"],
+    "JP": ["叫び", "絶叫", "悲鳴", "叫ぶ", "吼える", "激怒", "助けて", "嫌だ",
+           "うわ", "きゃあ", "ぎゃあ", "くそ", "やめて", "逃げろ"],
+    "EN": ["scream", "shriek", "roar", "howl", "help me", "stop", "no no"],
+}
+
+
+def _is_peak(text: str, record: str = "KR") -> bool:
     if not text:
         return False
-    peak_words = ["비명", "기합", "으아", "절규", "소리치", "폭발", "외치", "포효",
-                  "분노", "열받", "살려", "싫어", "제발", "도망", "그만", "아악", "으윽"]
-    return "!!" in text or any(w in text for w in peak_words)
+    words = _PEAK_WORDS.get(record, _PEAK_WORDS["KR"])
+    return "!!" in text or any(w in text for w in words)
 
 
-def _timing_flag(dialogue_kr: str, duration_raw) -> str:
+def _timing_flag(dialogue: str, duration_raw, record: str = "KR") -> str:
     dur = _parse_duration(duration_raw)
     if dur is None:
         return ""
-    est = _est_sec_kr(dialogue_kr or "")
+    if record == "JP":
+        est = _est_sec_jp(dialogue or "")
+    elif record == "EN":
+        est = _est_sec_en(dialogue or "")
+    else:
+        est = _est_sec_kr(dialogue or "")
     if est > dur * 1.1:
         return f"⚠ 예상{est:.1f}s > 허용{dur}s"
     return ""
@@ -94,10 +117,30 @@ def _ws_rows(ws, header_row: int) -> list[list]:
     return rows
 
 
+# 내레이션 스텝값 — 여기 포함된 값은 모두 "내레이션"으로 정규화
+_NARRATION_STEPS = {
+    "旁白",          # CN
+    "내레이션",      # KR
+    "나레이션",      # KR 오타 변형
+    "ナレーション",  # JP
+    "ナレ",          # JP 약칭
+    "Narration",     # EN
+    "NARRATION",
+    "Narrator",
+    "NARRATOR",
+}
+
+# 헤더 반복 행 감지용 — 녹음 언어별 헤더 문자열 포함
+_HEADER_CHAR_VALUES  = {"캐릭터", "配音对象", "角色", "キャラ", "キャラクター", "Character", "CHARACTER", "Char"}
+_HEADER_DIAL_VALUES  = {"라인", "对话文本", "终选语音", "台詞", "テキスト", "Line", "LINE", "Dialogue", "DIALOGUE", "Text"}
+_HEADER_FILE_VALUES  = {"语音命名", "台詞番号", "ボイス名", "Filename", "File Name", "FILENAME"}
+
+
 # ── Type_메인 ──────────────────────────────────────────────────────────────
 
 def _extract_main(ws, cls: dict) -> list[dict]:
     header_row = cls.get("header_row", 0)
+    record     = cls.get("_record", "KR")
     cf = cls.get("col_filename", -1)
     ckr = cls.get("col_char_kr", -1)
     ckn = cls.get("col_char_cn", -1)
@@ -109,7 +152,6 @@ def _extract_main(ws, cls: dict) -> list[dict]:
     alt = cls.get("col_alt", -1)
     step_col = cls.get("col_step_type", -1)
     skip_steps = set(cls.get("skip_step_values", []))
-    narration_steps = {"旁白", "내레이션"}
 
     result = []
     for row_vals in _ws_rows(ws, header_row):
@@ -132,15 +174,15 @@ def _extract_main(ws, cls: dict) -> list[dict]:
         if not filename and not dialogue_kr and not dialogue_cn and not char_kr and not char_cn:
             continue
 
-        # 旁白 → 내레이션
-        if step and step in narration_steps:
+        # 내레이션 스텝 → "내레이션" 정규화
+        if step and step in _NARRATION_STEPS:
             char_kr = "내레이션"
 
-        # KR 없고 CN만 있는 경우
+        # 녹음 대상 대사 없고 CN만 있는 경우
         if not dialogue_kr and dialogue_cn:
-            emotion_kr = (emotion_kr or "") + ("[KR 번역 없음]" if emotion_kr else "[KR 번역 없음]")
+            emotion_kr = (emotion_kr or "") + "[번역 없음]"
 
-        # 감정: KR 우선, 없으면 CN
+        # 감정: 녹음언어 우선, 없으면 CN
         emotion = emotion_kr or emotion_cn or ""
 
         result.append({
@@ -152,7 +194,7 @@ def _extract_main(ws, cls: dict) -> list[dict]:
             "ALT": alt_val or "",
             "옵티컬(원문)": optical or dialogue_cn or "",
             "⏱ 검수": "",
-            "_peak": _is_peak(dialogue_kr or ""),
+            "_peak": _is_peak(dialogue_kr or "", record),
         })
     return result
 
@@ -161,6 +203,7 @@ def _extract_main(ws, cls: dict) -> list[dict]:
 
 def _extract_pv(ws, cls: dict) -> list[dict]:
     header_row = cls.get("header_row", 0)
+    record     = cls.get("_record", "KR")
     ckr = cls.get("col_char_kr", -1)
     ckn = cls.get("col_char_cn", -1)
     ekr = cls.get("col_emotion_kr", -1)
@@ -187,12 +230,12 @@ def _extract_pv(ws, cls: dict) -> list[dict]:
         if not char_kr and not char_cn and not dialogue_kr and not dialogue_cn:
             continue
 
-        # 旁白
+        # 내레이션 정규화 (캐릭터 없고 대사만 있는 행)
         if not char_kr and not char_cn and (dialogue_kr or dialogue_cn):
             char_kr = "내레이션"
 
         emotion = emotion_kr or emotion_cn or ""
-        timing = _timing_flag(dialogue_kr or "", duration_raw) if dur >= 0 else ""
+        timing = _timing_flag(dialogue_kr or "", duration_raw, record) if dur >= 0 else ""
 
         result.append({
             "파일명": "",
@@ -203,7 +246,7 @@ def _extract_pv(ws, cls: dict) -> list[dict]:
             "ALT": alt_val or "",
             "옵티컬(원문)": optical or dialogue_cn or "",
             "⏱ 검수": timing,
-            "_peak": _is_peak(dialogue_kr or ""),
+            "_peak": _is_peak(dialogue_kr or "", record),
             "_timing_over": bool(timing),
         })
     return result
@@ -213,6 +256,7 @@ def _extract_pv(ws, cls: dict) -> list[dict]:
 
 def _extract_battle(ws, cls: dict) -> list[dict]:
     header_row = cls.get("header_row", 0)
+    record     = cls.get("_record", "KR")
     cf = cls.get("col_filename", -1)
     ckr = cls.get("col_char_kr", -1)
     ckn = cls.get("col_char_cn", -1)
@@ -241,8 +285,10 @@ def _extract_battle(ws, cls: dict) -> list[dict]:
         if process_val and not char_kr and not char_cn and not dialogue_kr and not dialogue_cn:
             continue
 
-        # 헤더 반복 행 스킵
-        if char_kr in ("캐릭터", "配音对象") or dialogue_kr in ("라인", "对话文本"):
+        # 헤더 반복 행 스킵 (KR/CN/JP/EN 헤더값 모두 처리)
+        if char_kr in _HEADER_CHAR_VALUES or char_cn in _HEADER_CHAR_VALUES:
+            continue
+        if dialogue_kr in _HEADER_DIAL_VALUES or dialogue_cn in _HEADER_DIAL_VALUES:
             continue
 
         # 완전 빈 행 스킵
@@ -259,7 +305,7 @@ def _extract_battle(ws, cls: dict) -> list[dict]:
             "ALT": alt_val or "",
             "옵티컬(원문)": optical or dialogue_cn or "",
             "⏱ 검수": "",
-            "_peak": _is_peak(dialogue_kr or ""),
+            "_peak": _is_peak(dialogue_kr or "", record),
         })
     return result
 
@@ -268,6 +314,7 @@ def _extract_battle(ws, cls: dict) -> list[dict]:
 
 def _extract_chara(ws, cls: dict) -> list[dict]:
     header_row = cls.get("header_row", 0)
+    record     = cls.get("_record", "KR")
     cf = cls.get("col_filename", -1)
     char_name = cls.get("char_name_kr") or ""
     ekr = cls.get("col_emotion_kr", -1)
@@ -289,15 +336,16 @@ def _extract_chara(ws, cls: dict) -> list[dict]:
         alt_val = _cell(row_vals, alt)
         functional = _cell(row_vals, func_col)
 
-        # 빈 행 / 헤더 반복 스킵
+        # 빈 행 스킵
         if not filename and not dialogue_kr and not dialogue_cn:
             continue
-        if dialogue_kr in ("라인", "KR") or filename in ("语音命名", "台詞番号"):
+        # 헤더 반복 행 스킵 (KR/JP/EN 헤더값 모두 처리)
+        if dialogue_kr in _HEADER_DIAL_VALUES or filename in _HEADER_FILE_VALUES:
             continue
 
-        # KR 번역 없는 경우
+        # 녹음 대상 대사 없고 원문만 있는 경우
         if not dialogue_kr and dialogue_cn:
-            emotion_kr = (emotion_kr or "") + "[KR 번역 없음]"
+            emotion_kr = (emotion_kr or "") + "[번역 없음]"
 
         emotion = emotion_kr or emotion_cn or ""
         # 功能을 감정 앞에 참고 정보로 붙임
@@ -313,7 +361,7 @@ def _extract_chara(ws, cls: dict) -> list[dict]:
             "ALT": alt_val or "",
             "옵티컬(원문)": optical or dialogue_cn or "",
             "⏱ 검수": "",
-            "_peak": _is_peak(dialogue_kr or ""),
+            "_peak": _is_peak(dialogue_kr or "", record),
         })
     return result
 
@@ -321,36 +369,42 @@ def _extract_chara(ws, cls: dict) -> list[dict]:
 # ── Type_짧은음성 ──────────────────────────────────────────────────────────
 
 def _extract_short(ws, cls: dict) -> list[dict]:
-    """병합셀 처리가 필요하므로 ws는 read_only=False로 열어야 함."""
+    """병합셀 처리가 필요하므로 ws는 read_only=False로 열어야 함.
+
+    캐릭터명뿐 아니라 감정(詳細 등) 열도 병합셀이 있을 수 있어서
+    모든 열에 대해 병합셀 값을 통합 관리한다.
+    """
     header_row = cls.get("header_row", 0)
-    cf = cls.get("col_filename", -1)
-    ckr = cls.get("col_char_kr", -1)
-    ckn = cls.get("col_char_cn", -1)
-    ekr = cls.get("col_emotion_kr", -1)
-    ecn = cls.get("col_emotion_cn", -1)
+    record     = cls.get("_record", "KR")
+    cf  = cls.get("col_filename",    -1)
+    ckr = cls.get("col_char_kr",     -1)
+    ckn = cls.get("col_char_cn",     -1)
+    ekr = cls.get("col_emotion_kr",  -1)
+    ecn = cls.get("col_emotion_cn",  -1)
     dkr = cls.get("col_dialogue_kr", -1)
     dcn = cls.get("col_dialogue_cn", -1)
-    opt = cls.get("col_optical", -1)
+    opt = cls.get("col_optical",     -1)
 
-    # 병합셀 캐릭터명 매핑 구성
-    merged_char = {}  # row_idx → (char_cn, char_kr)
+    # 모든 열의 병합셀 값 맵: (row_0based, col_0based) → 값
+    merged_map: dict[tuple[int, int], str] = {}
     try:
-        for merge_range in ws.merged_cells.ranges:
-            r_min, r_max = merge_range.min_row, merge_range.max_row
-            c_min = merge_range.min_col - 1  # 0-based
-            # 캐릭터명 열(ckn 또는 ckr)과 겹치는지 확인
-            if c_min in (ckn, ckr):
-                val = ws.cell(merge_range.min_row, merge_range.min_col).value
-                for r in range(r_min, r_max + 1):
-                    row_key = r - 1  # 0-based
-                    if row_key not in merged_char:
-                        merged_char[row_key] = {}
-                    if c_min == ckn:
-                        merged_char[row_key]["cn"] = str(val).strip() if val else ""
-                    elif c_min == ckr:
-                        merged_char[row_key]["kr"] = str(val).strip() if val else ""
+        for mr in ws.merged_cells.ranges:
+            val = ws.cell(mr.min_row, mr.min_col).value
+            s   = str(val).strip() if val is not None else ""
+            c0  = mr.min_col - 1   # 0-based
+            for r1 in range(mr.min_row, mr.max_row + 1):
+                merged_map[(r1 - 1, c0)] = s  # 0-based row key
     except Exception:
         pass  # read_only 모드이면 merged_cells 접근 불가 → 그냥 진행
+
+    def _mv(row_vals: list, row_0: int, col_0: int) -> str | None:
+        """병합셀 우선으로 값 반환. col_0=-1이면 None."""
+        if col_0 < 0:
+            return None
+        mv = merged_map.get((row_0, col_0))
+        if mv is not None:
+            return mv or None   # 빈 문자열은 None으로
+        return _cell(row_vals, col_0)
 
     result = []
     all_rows = list(ws.iter_rows(values_only=True))
@@ -359,39 +413,36 @@ def _extract_short(ws, cls: dict) -> list[dict]:
             continue
         row_vals = list(row_vals)
 
-        filename = _cell(row_vals, cf)
-        dialogue_kr = _cell(row_vals, dkr)
-        dialogue_cn = _cell(row_vals, dcn)
+        filename    = _mv(row_vals, i, cf)
+        char_kr     = _mv(row_vals, i, ckr)
+        char_cn     = _mv(row_vals, i, ckn)
+        emotion_kr  = _mv(row_vals, i, ekr)
+        emotion_cn  = _mv(row_vals, i, ecn)
+        dialogue_kr = _mv(row_vals, i, dkr)
+        dialogue_cn = _mv(row_vals, i, dcn)
+        optical     = _mv(row_vals, i, opt)
 
-        # 병합셀에서 캐릭터명 가져오기
-        mc = merged_char.get(i, {})
-        char_kr = mc.get("kr") or _cell(row_vals, ckr)
-        char_cn = mc.get("cn") or _cell(row_vals, ckn)
-
-        emotion_kr = _cell(row_vals, ekr)
-        emotion_cn = _cell(row_vals, ecn)
-        optical = _cell(row_vals, opt)
-
-        # KR 대사 없는 행 스킵
+        # 대사 없는 행 스킵
         if not dialogue_kr and not dialogue_cn:
             continue
+        # 파일명·대사 둘 다 없는 행도 스킵
         if not filename and not dialogue_kr:
             continue
 
         if not dialogue_kr and dialogue_cn:
-            emotion_kr = (emotion_kr or "") + "[KR 번역 없음]"
+            emotion_kr = (emotion_kr or "") + "[번역 없음]"
 
         emotion = emotion_kr or emotion_cn or ""
         result.append({
-            "파일명": filename or "",
-            "캐릭터명": char_kr or char_cn or "",
-            "감정": emotion,
-            "REC": "",
-            "대사": dialogue_kr or "",
-            "ALT": "",
+            "파일명":       filename or "",
+            "캐릭터명":     char_kr or char_cn or "",
+            "감정":         emotion,
+            "REC":          "",
+            "대사":         dialogue_kr or "",
+            "ALT":          "",
             "옵티컬(원문)": optical or dialogue_cn or "",
-            "⏱ 검수": "",
-            "_peak": _is_peak(dialogue_kr or ""),
+            "⏱ 검수":      "",
+            "_peak":        _is_peak(dialogue_kr or "", record),
         })
     return result
 
@@ -400,6 +451,7 @@ def _extract_short(ws, cls: dict) -> list[dict]:
 
 def _extract_infinite(ws, cls: dict) -> list[dict]:
     header_row = cls.get("header_row", 0)
+    record     = cls.get("_record", "KR")
     cf = cls.get("col_filename", -1)
     ckr = cls.get("col_char_kr", -1)
     ckn = cls.get("col_char_cn", -1)
@@ -408,9 +460,10 @@ def _extract_infinite(ws, cls: dict) -> list[dict]:
     opt = cls.get("col_optical", -1)
     adr_col = cls.get("col_adr_wild", -1)
     tc_col = cls.get("col_timecode", -1)
-    rec_col = -1  # 녹음여부 컬럼은 notes에서 추정
+    rec_col = -1  # 녹음여부 컬럼은 헤더에서 탐색
 
-    # 녹음여부 컬럼 찾기 (Yes/No 패턴)
+    # 녹음여부 컬럼 찾기 (KR/CN/JP/EN 헤더 키워드 모두 처리)
+    _REC_KEYWORDS = {"收录", "Record", "수록", "录音", "録音有無", "Include", "Rec"}
     if header_row >= 0:
         header_vals = []
         for i, row in enumerate(ws.iter_rows(values_only=True)):
@@ -418,7 +471,7 @@ def _extract_infinite(ws, cls: dict) -> list[dict]:
                 header_vals = list(row)
                 break
         for j, v in enumerate(header_vals):
-            if v and ("收录" in str(v) or "Record" in str(v)):
+            if v and any(kw in str(v) for kw in _REC_KEYWORDS):
                 rec_col = j
                 break
 
@@ -447,7 +500,7 @@ def _extract_infinite(ws, cls: dict) -> list[dict]:
         if timecode and "-->" in str(timecode):
             dur = _parse_timecode_duration(str(timecode))
             if dur:
-                timing = _timing_flag(dialogue_kr or "", f"{dur}s")
+                timing = _timing_flag(dialogue_kr or "", f"{dur}s", record)
 
         result.append({
             "파일명": filename or "",
@@ -479,3 +532,164 @@ def _parse_timecode_duration(tc: str) -> float | None:
         return to_sec(parts[1]) - to_sec(parts[0])
     except Exception:
         return None
+
+
+# ── 이미지 추출 (zipfile 직접 파싱, twoCellAnchor 포함) ──────────────────────
+
+def extract_sheet_images(fpath: str, sheet_name: str) -> list[dict]:
+    """xlsx에서 지정 시트의 이미지를 추출한다 (openpyxl이 못 읽는 twoCellAnchor 포함).
+
+    반환값: [{"bytes": bytes, "ext": str, "from_row": int, "from_col": int,
+              "to_row": int, "to_col": int, "cx_emu": int, "cy_emu": int}, ...]
+    row/col은 0-based.
+    """
+    NS_MAIN  = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    NS_PKG_R = 'http://schemas.openxmlformats.org/package/2006/relationships'
+    NS_OFF_R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+    NS_XDR   = 'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing'
+    NS_A     = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+
+    result: list[dict] = []
+    try:
+        with _zipfile.ZipFile(fpath, 'r') as zf:
+            names = set(zf.namelist())
+
+            # 1. 시트 r:id 조회
+            wb_root = _ET.fromstring(zf.read('xl/workbook.xml'))
+            rid = None
+            for sh in wb_root.iter(f'{{{NS_MAIN}}}sheet'):
+                if sh.get('name') == sheet_name:
+                    rid = sh.get(f'{{{NS_OFF_R}}}id')
+                    break
+            if not rid:
+                return result
+
+            # 2. 시트 파일 경로
+            wb_rels = _ET.fromstring(zf.read('xl/_rels/workbook.xml.rels'))
+            sheet_path = None
+            for rel in wb_rels.iter(f'{{{NS_PKG_R}}}Relationship'):
+                if rel.get('Id') == rid:
+                    t = rel.get('Target', '')
+                    sheet_path = ('xl/' + t) if not t.startswith('xl/') else t
+                    break
+            if not sheet_path or sheet_path not in names:
+                return result
+
+            # 3. sheet.xml.rels → drawing 경로
+            sp = sheet_path.rsplit('/', 1)
+            sheet_rels_path = f"{sp[0]}/_rels/{sp[1]}.rels"
+            if sheet_rels_path not in names:
+                return result
+
+            sh_rels = _ET.fromstring(zf.read(sheet_rels_path))
+            drawing_path = None
+            for rel in sh_rels.iter(f'{{{NS_PKG_R}}}Relationship'):
+                if 'drawing' in rel.get('Type', '').lower():
+                    t = rel.get('Target', '')
+                    if t.startswith('../'):
+                        drawing_path = 'xl/' + t[3:]
+                    elif t.startswith('/'):
+                        drawing_path = t[1:]
+                    else:
+                        drawing_path = sp[0] + '/' + t
+                    break
+            if not drawing_path or drawing_path not in names:
+                return result
+
+            # 4. drawing.xml.rels → 이미지 경로 맵
+            dp = drawing_path.rsplit('/', 1)
+            dr_rels_path = f"{dp[0]}/_rels/{dp[1]}.rels"
+            rid_to_media: dict[str, str] = {}
+            if dr_rels_path in names:
+                dr_rels = _ET.fromstring(zf.read(dr_rels_path))
+                for rel in dr_rels.iter(f'{{{NS_PKG_R}}}Relationship'):
+                    t = rel.get('Target', '')
+                    if t.startswith('../'):
+                        media_path = 'xl/' + t[3:]
+                    elif t.startswith('/'):
+                        media_path = t[1:]
+                    else:
+                        media_path = dp[0] + '/' + t
+                    rid_to_media[rel.get('Id', '')] = media_path
+
+            # 5. drawing XML → anchor 파싱
+            dr_root = _ET.fromstring(zf.read(drawing_path))
+            for tag in ('twoCellAnchor', 'oneCellAnchor'):
+                for anchor in dr_root.findall(f'{{{NS_XDR}}}{tag}'):
+                    from_el = anchor.find(f'{{{NS_XDR}}}from')
+                    to_el   = anchor.find(f'{{{NS_XDR}}}to')
+                    fr_row = int(from_el.find(f'{{{NS_XDR}}}row').text) if from_el is not None else 0
+                    fr_col = int(from_el.find(f'{{{NS_XDR}}}col').text) if from_el is not None else 0
+                    to_row = int(to_el.find(f'{{{NS_XDR}}}row').text)   if to_el   is not None else fr_row + 10
+                    to_col = int(to_el.find(f'{{{NS_XDR}}}col').text)   if to_el   is not None else fr_col + 3
+
+                    # 표시 크기 (EMU) — xdr:ext 또는 a:ext
+                    ext_el = anchor.find(f'.//{{{NS_XDR}}}ext')
+                    if ext_el is None:
+                        ext_el = anchor.find(f'.//{{{NS_A}}}ext')
+                    cx = int(ext_el.get('cx', 0)) if ext_el is not None else 0
+                    cy = int(ext_el.get('cy', 0)) if ext_el is not None else 0
+
+                    # blip r:embed
+                    blip = anchor.find(f'.//{{{NS_A}}}blip')
+                    if blip is None:
+                        continue
+                    r_embed = blip.get(f'{{{NS_OFF_R}}}embed', '')
+                    if not r_embed or r_embed not in rid_to_media:
+                        continue
+
+                    media_path = rid_to_media[r_embed]
+                    if media_path not in names:
+                        continue
+
+                    result.append({
+                        "bytes":    zf.read(media_path),
+                        "ext":      media_path.rsplit('.', 1)[-1].lower(),
+                        "from_row": fr_row,   # 0-based
+                        "from_col": fr_col,
+                        "to_row":   to_row,
+                        "to_col":   to_col,
+                        "cx_emu":   cx,
+                        "cy_emu":   cy,
+                    })
+    except Exception:
+        pass
+
+    return result
+
+
+def extract_images_for_sheet(fpath: str, sname: str, cls: dict) -> list[dict]:
+    """Type_짧은음성 시트 이미지를 추출하고 각 이미지에 캐릭터명(char_name)을 매핑한다."""
+    images = extract_sheet_images(fpath, sname)
+    if not images:
+        return []
+
+    ckr = cls.get("col_char_kr", -1)
+    ckn = cls.get("col_char_cn", -1)
+
+    # 병합셀 → row(0-based) → char 이름
+    row_to_char: dict[int, str] = {}
+    try:
+        wb_tmp = openpyxl.load_workbook(fpath, data_only=True)
+        ws_tmp = wb_tmp[sname]
+        for mr in ws_tmp.merged_cells.ranges:
+            c0 = mr.min_col - 1  # 0-based
+            if c0 not in (ckr, ckn):
+                continue
+            val = ws_tmp.cell(mr.min_row, mr.min_col).value
+            char = str(val).strip() if val else ""
+            for r in range(mr.min_row - 1, mr.max_row):   # 0-based
+                row_to_char[r] = char
+        wb_tmp.close()
+    except Exception:
+        pass
+
+    for img in images:
+        char = ""
+        for r in range(img["from_row"], img["to_row"] + 1):
+            if r in row_to_char:
+                char = row_to_char[r]
+                break
+        img["char_name"] = char
+
+    return images

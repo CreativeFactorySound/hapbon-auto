@@ -66,7 +66,7 @@ def build_hapbon(
                 _add_arknights_sheet(wb, item)
             else:
                 rows = item.get("rows") or []
-                _add_data_sheet(wb, sname, rows, item["type"])
+                _add_data_sheet(wb, sname, rows, item["type"], images=item.get("images"))
                 all_sheet_data.append((sname, rows, item["type"]))
 
     # 개괄 시트 (맨 앞)
@@ -109,7 +109,8 @@ def _get_col_list(sheet_type: str) -> list[str]:
     return list(_BASE_COLS)
 
 
-def _add_data_sheet(wb: openpyxl.Workbook, sheet_name: str, rows: list[dict], sheet_type: str):
+def _add_data_sheet(wb: openpyxl.Workbook, sheet_name: str, rows: list[dict], sheet_type: str,
+                    images: list | None = None):
     ws = wb.create_sheet(title=sheet_name)
     if not rows:
         return
@@ -145,6 +146,10 @@ def _add_data_sheet(wb: openpyxl.Workbook, sheet_name: str, rows: list[dict], sh
     has_alt = any(r.get("ALT") for r in rows if r is not None)
     if not has_alt:
         ws.column_dimensions[get_column_letter(alt_idx)].hidden = True
+
+    # 이미지 삽입 (Type_짧은음성 등)
+    if images:
+        _insert_images(ws, rows, images, cols)
 
 
 def _write_header(ws, cols: list[str]):
@@ -218,6 +223,83 @@ def _set_col_widths(ws, cols: list[str]):
         ws.column_dimensions[get_column_letter(i)].width = widths.get(col, 15)
 
 
+# ── 이미지 삽입 (Type_짧은음성 등) ──────────────────────────────────────────
+
+def _insert_images(ws, rows: list[dict], images: list[dict], cols: list[str]):
+    """출력 시트의 데이터 열 오른쪽에 이미지를 캐릭터 섹션별로 배치.
+
+    Pillow 미설치 시 gracefully skip.
+    """
+    import io as _io
+    try:
+        from openpyxl.drawing.image import Image as _XLImage
+    except ImportError:
+        return
+
+    if not images:
+        return
+
+    # 캐릭터별 출력 행 번호 목록 (1-based, 헤더=1 → 데이터 시작=2)
+    char_rows: dict[str, list[int]] = {}
+    for r_idx, row in enumerate(rows):
+        if row is None:
+            continue
+        char = (row.get("캐릭터명") or "").strip()
+        if char:
+            char_rows.setdefault(char, []).append(r_idx + 2)
+
+    # 이미지 열: 마지막 데이터 열 오른쪽
+    img_col_idx    = len(cols) + 1
+    img_col_letter = get_column_letter(img_col_idx)
+    ws.column_dimensions[img_col_letter].width = 36   # ≈ 270 px
+
+    for img_info in images:
+        raw       = img_info.get("bytes", b"")
+        char_name = img_info.get("char_name", "")
+        cx_emu    = img_info.get("cx_emu", 0)
+        cy_emu    = img_info.get("cy_emu", 0)
+
+        if not raw:
+            continue
+
+        # 캐릭터 섹션 행 찾기 (완전 매칭 → 부분 매칭 fallback)
+        row_list = char_rows.get(char_name, [])
+        if not row_list:
+            for c, rl in char_rows.items():
+                if char_name and (char_name in c or c in char_name):
+                    row_list = rl
+                    break
+        if not row_list:
+            row_list = [2]
+
+        start_row = row_list[0]
+
+        try:
+            img_obj = _XLImage(_io.BytesIO(raw))
+
+            # 픽셀 크기 결정 (96 DPI: 1 px = 9525 EMU)
+            if cx_emu > 0 and cy_emu > 0:
+                w_px = round(cx_emu / 9525)
+                h_px = round(cy_emu / 9525)
+            else:
+                w_px = getattr(img_obj, 'width',  240) or 240
+                h_px = getattr(img_obj, 'height', 320) or 320
+
+            # 열 폭(270 px)에 맞게 비율 유지하며 축소, 세로 최대 450 px
+            max_w, max_h = 270, 450
+            scale = min(max_w / max(w_px, 1), max_h / max(h_px, 1), 1.0)
+            w_px  = round(w_px * scale)
+            h_px  = round(h_px * scale)
+
+            img_obj.width  = max(w_px, 60)
+            img_obj.height = max(h_px, 60)
+
+            ws.add_image(img_obj, f"{img_col_letter}{start_row}")
+
+        except Exception:
+            pass
+
+
 # ── 명방캐릭터 시트 (원본 그대로) ────────────────────────────────────────
 
 def _add_arknights_sheet(wb: openpyxl.Workbook, item: dict):
@@ -253,7 +335,9 @@ def _add_summary_sheet(wb: openpyxl.Workbook, all_sheet_data: list[tuple]):
             if row is None:
                 continue
             char = row.get("캐릭터명", "").strip()
-            if not char or char in ("캐릭터명",):
+            # 헤더 반복 행이나 빈 값 제외
+            if not char or char in {"캐릭터명", "캐릭터", "配音对象", "角色",
+                                    "キャラ", "キャラクター", "Character", "CHARACTER"}:
                 continue
             if char not in char_tab_counts:
                 char_tab_counts[char] = {}
