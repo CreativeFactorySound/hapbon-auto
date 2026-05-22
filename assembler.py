@@ -340,9 +340,14 @@ def _add_arknights_sheet(wb: openpyxl.Workbook, item: dict):
 def _add_summary_sheet(wb: openpyxl.Workbook, all_sheet_data: list[tuple]):
     ws = wb.create_sheet(title="개괄")
 
-    # 캐릭터별 탭별 대사 수 집계
-    char_tab_counts: dict[str, dict[str, int]] = {}
-    tab_names = []
+    # 캐릭터별 탭별 라인 수 + 단어 수 집계
+    char_tab_lines: dict[str, dict[str, int]] = {}
+    char_tab_words: dict[str, dict[str, int]] = {}
+    tab_names: list[str] = []
+
+    _HEADER_CHAR_SKIP = {"캐릭터명", "캐릭터", "配音对象", "角色",
+                         "キャラ", "キャラクター", "Character", "CHARACTER"}
+
     for sname, rows, stype in all_sheet_data:
         if stype == "Type_명방캐릭터":
             continue
@@ -351,16 +356,19 @@ def _add_summary_sheet(wb: openpyxl.Workbook, all_sheet_data: list[tuple]):
             if row is None:
                 continue
             char = row.get("캐릭터명", "").strip()
-            # 헤더 반복 행이나 빈 값 제외
-            if not char or char in {"캐릭터명", "캐릭터", "配音对象", "角色",
-                                    "キャラ", "キャラクター", "Character", "CHARACTER"}:
+            if not char or char in _HEADER_CHAR_SKIP:
                 continue
-            if char not in char_tab_counts:
-                char_tab_counts[char] = {}
-            char_tab_counts[char][sname] = char_tab_counts[char].get(sname, 0) + 1
+            dial = str(row.get("대사") or "").strip()
+            words = len(dial.split()) if dial else 0
 
-    # 헤더
-    header = ["캐릭터명", "성우명"] + tab_names + ["합계"]
+            if char not in char_tab_lines:
+                char_tab_lines[char] = {}
+                char_tab_words[char] = {}
+            char_tab_lines[char][sname] = char_tab_lines[char].get(sname, 0) + 1
+            char_tab_words[char][sname] = char_tab_words[char].get(sname, 0) + words
+
+    # 헤더: 탭 열에 "(라인/단어)" 부제목
+    header = ["캐릭터명", "성우명"] + [f"{t}\n(라인/단어)" for t in tab_names] + ["합계\n(라인/단어)"]
     ws.append(header)
 
     # 헤더 스타일
@@ -371,19 +379,28 @@ def _add_summary_sheet(wb: openpyxl.Workbook, all_sheet_data: list[tuple]):
         cell.font      = hdr_font
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border    = _HDR_BORDER
-    ws.row_dimensions[1].height = 28
+    ws.row_dimensions[1].height = 36  # 2줄 헤더 높이
 
-    # 캐릭터별 행 (합계 내림차순)
+    # 캐릭터별 행 (총 라인 수 내림차순)
     sorted_chars = sorted(
-        char_tab_counts.items(),
+        char_tab_lines.items(),
         key=lambda x: sum(x[1].values()),
         reverse=True,
     )
-    for r_idx, (char, tab_map) in enumerate(sorted_chars, 2):
-        total = sum(tab_map.values())
-        row_vals = [char, ""] + [tab_map.get(t, "") or "" for t in tab_names] + [total]
+    for r_idx, (char, line_map) in enumerate(sorted_chars, 2):
+        total_lines = sum(line_map.values())
+        total_words = sum(char_tab_words[char].values())
+
+        tab_cells = []
+        for t in tab_names:
+            ln = line_map.get(t, 0)
+            wd = char_tab_words[char].get(t, 0)
+            tab_cells.append(f"{ln} / {wd}" if ln else "")
+
+        row_vals = [char, ""] + tab_cells + [f"{total_lines} / {total_words}"]
         ws.append(row_vals)
-        for c_idx, val in enumerate(row_vals, 1):
+
+        for c_idx, _ in enumerate(row_vals, 1):
             cell = ws.cell(row=r_idx, column=c_idx)
             col_name = header[c_idx - 1]
             cell.border = _CELL_BORDER
@@ -392,7 +409,7 @@ def _add_summary_sheet(wb: openpyxl.Workbook, all_sheet_data: list[tuple]):
             elif col_name == "성우명":
                 cell.fill = PatternFill("solid", fgColor=SUMMARY_CAST_BG)
                 cell.font = Font(name="맑은 고딕", size=9)
-            elif col_name == "합계":
+            elif col_name.startswith("합계"):
                 cell.fill = PatternFill("solid", fgColor=SUMMARY_TOTAL_BG)
                 cell.font = Font(name="맑은 고딕", size=9, bold=True)
             else:
@@ -403,7 +420,9 @@ def _add_summary_sheet(wb: openpyxl.Workbook, all_sheet_data: list[tuple]):
     ws.column_dimensions["A"].width = 20
     ws.column_dimensions["B"].width = 14
     for i in range(3, len(header) + 1):
-        ws.column_dimensions[get_column_letter(i)].width = max(12, len(header[i - 1]) * 1.5)
+        # 탭 이름 길이 기준 (헤더에 "\n(라인/단어)" 붙어있으므로 원본 탭명 기준)
+        tab_name = tab_names[i - 3] if i - 3 < len(tab_names) else "합계"
+        ws.column_dimensions[get_column_letter(i)].width = max(16, len(tab_name) * 1.5)
 
     ws.freeze_panes = "A2"
 
