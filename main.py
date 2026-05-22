@@ -253,7 +253,23 @@ def main():
         output += ".xlsx"
     os.makedirs(Path(output).parent, exist_ok=True)
     build_hapbon(processed, log_entries, project_title, output, args.optical)
-    print(f"[완료] {output}\n")
+
+    # 완료 통계
+    _stage_re = re.compile(r'\([^)]*\)|\[[^\]]*\]')
+    def _wc(t):
+        cleaned = _stage_re.sub('', str(t or '')).strip()
+        return len(cleaned.split()) if cleaned else 0
+
+    total_lines = sum(
+        len([r for r in (item.get("rows") or []) if r is not None])
+        for item in processed if item["type"] != "Type_명방캐릭터"
+    )
+    total_words = sum(
+        _wc(r.get("대사", ""))
+        for item in processed if item["type"] != "Type_명방캐릭터"
+        for r in (item.get("rows") or []) if r is not None
+    )
+    print(f"[완료] 총 {total_lines}라인 / {total_words:,}단어 → {output}\n")
 
 
 # ── 헬퍼 ─────────────────────────────────────────────────────────────────

@@ -2,6 +2,16 @@
 
 import re
 from pathlib import Path
+
+# 지문·이펙트 제거 후 어절 수 계산 (개괄 단어 수 집계용)
+_STAGE_DIR_RE = re.compile(r'\([^)]*\)|\[[^\]]*\]')
+
+def _count_words(text: str) -> int:
+    """괄호 안 지문을 제거한 뒤 공백 기준 어절 수 반환."""
+    if not text:
+        return 0
+    cleaned = _STAGE_DIR_RE.sub('', str(text)).strip()
+    return len(cleaned.split()) if cleaned else 0
 import openpyxl
 from openpyxl.styles import (
     PatternFill, Font, Alignment, Border, Side
@@ -359,7 +369,7 @@ def _add_summary_sheet(wb: openpyxl.Workbook, all_sheet_data: list[tuple]):
             if not char or char in _HEADER_CHAR_SKIP:
                 continue
             dial = str(row.get("대사") or "").strip()
-            words = len(dial.split()) if dial else 0
+            words = _count_words(dial)
 
             if char not in char_tab_lines:
                 char_tab_lines[char] = {}
