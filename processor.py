@@ -577,6 +577,7 @@ def _extract_short(ws, cls: dict) -> list[dict]:
 
     used   = {c for c in [cf, ckr, ckn, ekr, ecn, dkr, dcn, opt, alt] if c >= 0}
     header = _get_header(ws, header_row)
+    gray_rows = cls.get("_gray_rows", set())
 
     result = []
     all_rows = list(ws.iter_rows(values_only=True))
@@ -600,6 +601,15 @@ def _extract_short(ws, cls: dict) -> list[dict]:
             continue
         # 파일명·대사 둘 다 없는 행도 스킵
         if not filename and not dialogue_kr:
+            continue
+
+        # 스킵: 녹음 불필요 표기 행
+        row_text = " ".join(str(v) for v in row_vals if v is not None)
+        if any(kw in row_text for kw in _SKIP_ROW_KEYWORDS):
+            continue
+
+        # 스킵: 회색 처리된 행 (i = 절대 row 인덱스, 녹음 언어 대사 없으면 제외)
+        if i in gray_rows and not dialogue_kr:
             continue
 
         if not dialogue_kr and dialogue_cn:
