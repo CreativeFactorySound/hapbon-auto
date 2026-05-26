@@ -60,6 +60,7 @@ def build_hapbon(
     project_title: str,
     output_path: str,
     optical_lang: str,
+    summary_mode: str = "both",
 ):
     wb = openpyxl.Workbook()
     wb.remove(wb.active)  # 기본 시트 제거
@@ -82,7 +83,7 @@ def build_hapbon(
                 all_sheet_data.append((sname, rows, item["type"]))
 
     # 개괄 시트 (맨 앞)
-    _add_summary_sheet(wb, all_sheet_data)
+    _add_summary_sheet(wb, all_sheet_data, summary_mode=summary_mode)
 
     # 로그 시트 (스킵된 항목 있을 때만)
     if log_entries:
@@ -347,7 +348,7 @@ def _add_arknights_sheet(wb: openpyxl.Workbook, item: dict):
 
 # ── 개괄 시트 ──────────────────────────────────────────────────────────────
 
-def _add_summary_sheet(wb: openpyxl.Workbook, all_sheet_data: list[tuple]):
+def _add_summary_sheet(wb: openpyxl.Workbook, all_sheet_data: list[tuple], summary_mode: str = "both"):
     ws = wb.create_sheet(title="개괄")
 
     # 캐릭터별 탭별 라인 수 + 단어 수 집계
@@ -377,8 +378,15 @@ def _add_summary_sheet(wb: openpyxl.Workbook, all_sheet_data: list[tuple]):
             char_tab_lines[char][sname] = char_tab_lines[char].get(sname, 0) + 1
             char_tab_words[char][sname] = char_tab_words[char].get(sname, 0) + words
 
-    # 헤더: 탭 열에 "(라인/단어)" 부제목
-    header = ["캐릭터명", "성우명"] + [f"{t}\n(라인/단어)" for t in tab_names] + ["합계\n(라인/단어)"]
+    # 헤더: summary_mode에 따라 부제목 결정
+    if summary_mode == "lines":
+        tab_suffix, total_label = "", "합계"
+    elif summary_mode == "words":
+        tab_suffix, total_label = "\n(단어)", "합계\n(단어)"
+    else:  # both
+        tab_suffix, total_label = "\n(라인/단어)", "합계\n(라인/단어)"
+
+    header = ["캐릭터명", "성우명"] + [f"{t}{tab_suffix}" for t in tab_names] + [total_label]
     ws.append(header)
 
     # 헤더 스타일
@@ -389,7 +397,7 @@ def _add_summary_sheet(wb: openpyxl.Workbook, all_sheet_data: list[tuple]):
         cell.font      = hdr_font
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border    = _HDR_BORDER
-    ws.row_dimensions[1].height = 36  # 2줄 헤더 높이
+    ws.row_dimensions[1].height = 28 if summary_mode == "lines" else 36
 
     # 캐릭터별 행 (총 라인 수 내림차순)
     sorted_chars = sorted(
@@ -405,9 +413,23 @@ def _add_summary_sheet(wb: openpyxl.Workbook, all_sheet_data: list[tuple]):
         for t in tab_names:
             ln = line_map.get(t, 0)
             wd = char_tab_words[char].get(t, 0)
-            tab_cells.append(f"{ln} / {wd}" if ln else "")
+            if not ln:
+                tab_cells.append("")
+            elif summary_mode == "lines":
+                tab_cells.append(ln)
+            elif summary_mode == "words":
+                tab_cells.append(wd)
+            else:
+                tab_cells.append(f"{ln} / {wd}")
 
-        row_vals = [char, ""] + tab_cells + [f"{total_lines} / {total_words}"]
+        if summary_mode == "lines":
+            total_cell = total_lines
+        elif summary_mode == "words":
+            total_cell = total_words
+        else:
+            total_cell = f"{total_lines} / {total_words}"
+
+        row_vals = [char, ""] + tab_cells + [total_cell]
         ws.append(row_vals)
 
         for c_idx, _ in enumerate(row_vals, 1):

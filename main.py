@@ -34,6 +34,8 @@ def main():
     parser.add_argument("--round", default="", help="차수 (예: 3.3차)")
     parser.add_argument("--optical", default="EN", choices=["EN", "CN", "NONE"], help="기준 옵티컬 언어")
     parser.add_argument("--record", default="KR", choices=["KR", "EN", "JP"], help="녹음 언어")
+    parser.add_argument("--summary", default="both", choices=["lines", "words", "both"],
+                        help="개괄 시트 집계 표시 방식: lines=라인수만 / words=단어수만 / both=둘 다 (기본값)")
     args = parser.parse_args()
 
     if not args.api_key:
@@ -252,7 +254,7 @@ def main():
     elif not output.lower().endswith(".xlsx"):
         output += ".xlsx"
     os.makedirs(Path(output).parent, exist_ok=True)
-    build_hapbon(processed, log_entries, project_title, output, args.optical)
+    build_hapbon(processed, log_entries, project_title, output, args.optical, summary_mode=args.summary)
 
     # 완료 통계
     _stage_re = re.compile(r'\([^)]*\)|\[[^\]]*\]')
