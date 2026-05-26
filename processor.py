@@ -144,6 +144,74 @@ def _collect_extra(row_vals: list, used: set, header: list) -> dict:
     return extra
 
 
+# ── 회색 셀 감지 ─────────────────────────────────────────────────────────────
+
+def _is_gray_cell(cell) -> bool:
+    """셀의 폰트 색상 또는 배경 색상이 회색 계열인지 확인."""
+    def _parse_rgb(rgb_str: str):
+        s = rgb_str.upper().strip()
+        if len(s) == 8:
+            s = s[2:]   # alpha 접두사(FF) 제거
+        if len(s) != 6:
+            return None
+        if s in ("000000", "FFFFFF", "00000000", "FFFFFFFF"):
+            return None
+        try:
+            return int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
+        except Exception:
+            return None
+
+    def _is_gray_rgb(rgb_str: str, lo: int, hi: int) -> bool:
+        rgb = _parse_rgb(rgb_str)
+        if rgb is None:
+            return False
+        r, g, b = rgb
+        # R ≈ G ≈ B (±20) 이고 lo ≤ R ≤ hi 이면 회색
+        return lo <= r <= hi and abs(r - g) <= 20 and abs(g - b) <= 20
+
+    try:
+        fc = cell.font.color if cell.font else None
+        if fc and fc.type == "rgb" and fc.rgb:
+            if _is_gray_rgb(fc.rgb, 60, 200):   # 회색 폰트
+                return True
+    except Exception:
+        pass
+
+    try:
+        fill = cell.fill
+        if fill and fill.patternType not in (None, "none"):
+            fg = fill.fgColor
+            if fg and fg.type == "rgb" and fg.rgb:
+                if _is_gray_rgb(fg.rgb, 140, 230):  # 밝은 회색 배경
+                    return True
+    except Exception:
+        pass
+
+    return False
+
+
+def scan_gray_rows(fpath: str, sname: str, dialogue_col: int, header_row: int) -> set:
+    """대사 열이 회색 처리된 행의 절대 인덱스(0-based) 집합 반환.
+    read_only=False로 열어야 스타일 정보 접근 가능.
+    오류 발생 시 빈 set 반환 (graceful fallback).
+    """
+    if dialogue_col < 0:
+        return set()
+    gray: set[int] = set()
+    try:
+        wb = openpyxl.load_workbook(fpath, data_only=True)
+        ws = wb[sname]
+        for r_idx, row in enumerate(ws.iter_rows()):
+            if r_idx <= header_row:
+                continue
+            if dialogue_col < len(row) and _is_gray_cell(row[dialogue_col]):
+                gray.add(r_idx)
+        wb.close()
+    except Exception:
+        pass
+    return gray
+
+
 # 내레이션 스텝값 — 여기 포함된 값은 모두 "내레이션"으로 정규화
 _NARRATION_STEPS = {
     "旁白",          # CN
@@ -163,7 +231,15 @@ _HEADER_DIAL_VALUES  = {"라인", "对话文本", "终选语音", "台詞", "テ
 _HEADER_FILE_VALUES  = {"语音命名", "台詞番号", "ボイス名", "Filename", "File Name", "FILENAME"}
 
 # 녹음 불필요 행 감지용 — 이 값이 포함된 행은 스킵
-_SKIP_ROW_KEYWORDS = {"无需配音", "怪物音效", "不需配音", "无配音"}
+_SKIP_ROW_KEYWORDS = {
+    # 중국어
+    "无需配音", "怪物音效", "不需配音", "无配音", "无需录音", "不需要配音",
+    # 한국어
+    "더빙 불필요", "녹음 불필요", "번역 불필요", "더빙불필요", "녹음불필요",
+    "번역불필요", "녹음없음", "더빙없음", "녹음 없음", "더빙 없음",
+    # 일본어
+    "収録不要", "録音不要",
+}
 
 
 # ── Type_메인 ──────────────────────────────────────────────────────────────
@@ -185,9 +261,10 @@ def _extract_main(ws, cls: dict) -> list[dict]:
 
     used    = {c for c in [cf, ckr, ckn, ekr, ecn, dkr, dcn, opt, alt, step_col] if c >= 0}
     header  = _get_header(ws, header_row)
+    gray_rows = cls.get("_gray_rows", set())
 
     result = []
-    for row_vals in _ws_rows(ws, header_row):
+    for abs_idx, row_vals in enumerate(_ws_rows(ws, header_row), start=header_row + 1):
         filename = _cell(row_vals, cf)
         char_kr = _cell(row_vals, ckr)
         char_cn = _cell(row_vals, ckn)
@@ -209,13 +286,17 @@ def _extract_main(ws, cls: dict) -> list[dict]:
         if dialogue_kr in _HEADER_DIAL_VALUES or dialogue_cn in _HEADER_DIAL_VALUES:
             continue
 
-        # 스킵: 无需配音 등 녹음 불필요 표기 행
+        # 스킵: 녹음 불필요 표기 행
         row_text = " ".join(str(v) for v in row_vals if v is not None)
         if any(kw in row_text for kw in _SKIP_ROW_KEYWORDS):
             continue
 
         # 스킵: 파일명도 없고 대사도 없고 캐릭터도 없는 완전 빈 행
         if not filename and not dialogue_kr and not dialogue_cn and not char_kr and not char_cn:
+            continue
+
+        # 스킵: 회색 처리된 행 (번역 없음 + 회색 = 완전 제외)
+        if abs_idx in gray_rows and not dialogue_kr:
             continue
 
         # 내레이션 스텝 → "내레이션" 정규화
@@ -261,9 +342,10 @@ def _extract_pv(ws, cls: dict) -> list[dict]:
 
     used   = {c for c in [ckr, ckn, ekr, ecn, dkr, dcn, opt, alt, dur] if c >= 0}
     header = _get_header(ws, header_row)
+    gray_rows = cls.get("_gray_rows", set())
 
     result = []
-    for row_vals in _ws_rows(ws, header_row):
+    for abs_idx, row_vals in enumerate(_ws_rows(ws, header_row), start=header_row + 1):
         char_kr = _cell(row_vals, ckr)
         char_cn = _cell(row_vals, ckn)
         dialogue_kr = _cell(row_vals, dkr)
@@ -276,6 +358,15 @@ def _extract_pv(ws, cls: dict) -> list[dict]:
 
         # 빈 행 스킵
         if not char_kr and not char_cn and not dialogue_kr and not dialogue_cn:
+            continue
+
+        # 스킵: 녹음 불필요 표기 행
+        row_text = " ".join(str(v) for v in row_vals if v is not None)
+        if any(kw in row_text for kw in _SKIP_ROW_KEYWORDS):
+            continue
+
+        # 스킵: 회색 처리된 행
+        if abs_idx in gray_rows and not dialogue_kr:
             continue
 
         # 내레이션 정규화 (캐릭터 없고 대사만 있는 행)
@@ -319,9 +410,10 @@ def _extract_battle(ws, cls: dict) -> list[dict]:
 
     used   = {c for c in [cf, ckr, ckn, ekr, ecn, dkr, dcn, opt, alt, process_col] if c >= 0}
     header = _get_header(ws, header_row)
+    gray_rows = cls.get("_gray_rows", set())
 
     result = []
-    for row_vals in _ws_rows(ws, header_row):
+    for abs_idx, row_vals in enumerate(_ws_rows(ws, header_row), start=header_row + 1):
         filename = _cell(row_vals, cf)
         char_kr = _cell(row_vals, ckr)
         char_cn = _cell(row_vals, ckn)
@@ -333,23 +425,27 @@ def _extract_battle(ws, cls: dict) -> list[dict]:
         alt_val = _cell(row_vals, alt)
         process_val = _cell(row_vals, process_col)
 
-        # 파트 제목 행 스킵: 流程节点에 전투 단계가 있고 캐릭터/대사가 없는 경우
+        # 파트 제목 행 스킵
         if process_val and not char_kr and not char_cn and not dialogue_kr and not dialogue_cn:
             continue
 
-        # 헤더 반복 행 스킵 (KR/CN/JP/EN 헤더값 모두 처리)
+        # 헤더 반복 행 스킵
         if char_kr in _HEADER_CHAR_VALUES or char_cn in _HEADER_CHAR_VALUES:
             continue
         if dialogue_kr in _HEADER_DIAL_VALUES or dialogue_cn in _HEADER_DIAL_VALUES:
             continue
 
-        # 스킵: 无需配音/怪物音効 등 녹음 불필요 표기 행
+        # 스킵: 녹음 불필요 표기 행
         row_text = " ".join(str(v) for v in row_vals if v is not None)
         if any(kw in row_text for kw in _SKIP_ROW_KEYWORDS):
             continue
 
         # 완전 빈 행 스킵
         if not filename and not char_kr and not char_cn and not dialogue_kr and not dialogue_cn:
+            continue
+
+        # 스킵: 회색 처리된 행
+        if abs_idx in gray_rows and not dialogue_kr:
             continue
 
         emotion = emotion_kr or emotion_cn or ""
@@ -385,9 +481,10 @@ def _extract_chara(ws, cls: dict) -> list[dict]:
 
     used   = {c for c in [cf, ekr, ecn, dkr, dcn, opt, alt, func_col] if c >= 0}
     header = _get_header(ws, header_row)
+    gray_rows = cls.get("_gray_rows", set())
 
     result = []
-    for row_vals in _ws_rows(ws, header_row):
+    for abs_idx, row_vals in enumerate(_ws_rows(ws, header_row), start=header_row + 1):
         filename = _cell(row_vals, cf)
         dialogue_kr = _cell(row_vals, dkr)
         dialogue_cn = _cell(row_vals, dcn)
@@ -400,8 +497,17 @@ def _extract_chara(ws, cls: dict) -> list[dict]:
         # 빈 행 스킵
         if not filename and not dialogue_kr and not dialogue_cn:
             continue
-        # 헤더 반복 행 스킵 (KR/JP/EN 헤더값 모두 처리)
+        # 헤더 반복 행 스킵
         if dialogue_kr in _HEADER_DIAL_VALUES or filename in _HEADER_FILE_VALUES:
+            continue
+
+        # 스킵: 녹음 불필요 표기 행
+        row_text = " ".join(str(v) for v in row_vals if v is not None)
+        if any(kw in row_text for kw in _SKIP_ROW_KEYWORDS):
+            continue
+
+        # 스킵: 회색 처리된 행
+        if abs_idx in gray_rows and not dialogue_kr:
             continue
 
         # 녹음 대상 대사 없고 원문만 있는 경우
@@ -545,9 +651,10 @@ def _extract_infinite(ws, cls: dict) -> list[dict]:
 
     used   = {c for c in [cf, ckr, ckn, dkr, dcn, opt, adr_col, tc_col, rec_col] if c >= 0}
     header = _get_header(ws, header_row)
+    gray_rows = cls.get("_gray_rows", set())
 
     result = []
-    for row_vals in _ws_rows(ws, header_row):
+    for abs_idx, row_vals in enumerate(_ws_rows(ws, header_row), start=header_row + 1):
         # 녹음여부 필터
         if rec_col >= 0:
             rec_val = _cell(row_vals, rec_col)
@@ -564,6 +671,15 @@ def _extract_infinite(ws, cls: dict) -> list[dict]:
         timecode = _cell(row_vals, tc_col)
 
         if not dialogue_kr and not dialogue_cn:
+            continue
+
+        # 스킵: 녹음 불필요 표기 행
+        row_text = " ".join(str(v) for v in row_vals if v is not None)
+        if any(kw in row_text for kw in _SKIP_ROW_KEYWORDS):
+            continue
+
+        # 스킵: 회색 처리된 행
+        if abs_idx in gray_rows and not dialogue_kr:
             continue
 
         # 타임코드에서 duration 계산

@@ -21,7 +21,7 @@ if sys.stderr.encoding and sys.stderr.encoding.lower() not in ("utf-8", "utf8"):
 import openpyxl
 
 from gemini_client import GeminiClient
-from processor import process_sheet, extract_images_for_sheet
+from processor import process_sheet, extract_images_for_sheet, scan_gray_rows
 from assembler import build_hapbon
 
 
@@ -36,6 +36,8 @@ def main():
     parser.add_argument("--record", default="KR", choices=["KR", "EN", "JP"], help="녹음 언어")
     parser.add_argument("--summary", default="both", choices=["lines", "words", "both"],
                         help="개괄 시트 집계 표시 방식: lines=라인수만 / words=단어수만 / both=둘 다 (기본값)")
+    parser.add_argument("--no-overview", action="store_true",
+                        help="개괄 시트를 합본에 포함하지 않음")
     args = parser.parse_args()
 
     if not args.api_key:
@@ -197,7 +199,10 @@ def main():
                 print(f"→ {len([r for r in all_rows if r is not None])}행 (합산)")
 
             elif t == "Type_짧은음성":
-                # 병합셀 처리: read_only=False 필요
+                # 병합셀 처리: read_only=False 필요 (gray scan도 동시 처리)
+                gray = scan_gray_rows(fpath, sname, cls.get("col_dialogue_kr", -1), cls.get("header_row", 0))
+                if gray:
+                    cls = {**cls, "_gray_rows": gray}
                 wb = openpyxl.load_workbook(fpath, data_only=True)
                 ws = wb[sname]
                 rows = process_sheet(ws, cls)
@@ -216,6 +221,10 @@ def main():
                 print(f"→ {len(rows)}행{img_note}")
 
             else:
+                # gray 셀 스캔 (read_only=False로 미리 열어서 스타일 확인)
+                gray = scan_gray_rows(fpath, sname, cls.get("col_dialogue_kr", -1), cls.get("header_row", 0))
+                if gray:
+                    cls = {**cls, "_gray_rows": gray}
                 wb = openpyxl.load_workbook(fpath, data_only=True, read_only=True)
                 ws = wb[sname]
                 rows = process_sheet(ws, cls)
@@ -254,7 +263,9 @@ def main():
     elif not output.lower().endswith(".xlsx"):
         output += ".xlsx"
     os.makedirs(Path(output).parent, exist_ok=True)
-    build_hapbon(processed, log_entries, project_title, output, args.optical, summary_mode=args.summary)
+    build_hapbon(processed, log_entries, project_title, output, args.optical,
+                 summary_mode=args.summary,
+                 include_summary=not args.no_overview)
 
     # 완료 통계
     _stage_re = re.compile(r'\([^)]*\)|\[[^\]]*\]')
