@@ -1,0 +1,12 @@
+{
+  "id": "default",
+  "display_name": "Default (범용)",
+  "description": "범용 게임 더빙 합본 제작 — 프로젝트명 직접 입력",
+  "defaults": {
+    "record": "KR",
+    "optical": "EN"
+  },
+  "classify_extra": "",
+  "functional_emotion_prefix": true,
+  "tab_naming": "standard"
+}

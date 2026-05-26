@@ -1,8 +1,12 @@
 """합본 자동화 메인 스크립트.
 
 Usage:
-    python main.py --source <폴더> --output <파일.xlsx> --project <프로젝트명>
-                   [--round <차수>] [--optical EN|CN|NONE] [--api-key <key>]
+    python main.py --source <폴더> --output <파일.xlsx>
+                   [--profile default|reverse1999|muhandae]
+                   [--project <프로젝트명>] [--round <차수>]
+                   [--optical EN|CN|NONE] [--record KR|JP|EN] [--api-key <key>]
+
+    --source, --output 만 지정하면 인터랙티브 선택 모드 실행.
 """
 
 import argparse
@@ -23,6 +27,10 @@ import openpyxl
 from gemini_client import GeminiClient
 from processor import process_sheet, extract_images_for_sheet, scan_gray_rows
 from assembler import build_hapbon
+from profile import (
+    load_profile, select_profile_interactive,
+    build_classify_prompt, make_sheet_name_rv1999,
+)
 
 
 def main():
@@ -30,12 +38,14 @@ def main():
     parser.add_argument("--api-key", default=os.environ.get("GEMINI_API_KEY"), help="Gemini API 키")
     parser.add_argument("--source", required=True, help="원본 xlsx 폴더 경로")
     parser.add_argument("--output", required=True, help="출력 합본 경로 (.xlsx)")
-    parser.add_argument("--project", required=True, help="프로젝트명")
-    parser.add_argument("--round", default="", help="차수 (예: 3.3차)")
-    parser.add_argument("--optical", default="EN", choices=["EN", "CN", "NONE"], help="기준 옵티컬 언어")
-    parser.add_argument("--record", default="KR", choices=["KR", "EN", "JP"], help="녹음 언어")
+    parser.add_argument("--profile", default=None,
+                        help="프로파일 ID (default|reverse1999|muhandae). 미지정 시 인터랙티브 선택")
+    parser.add_argument("--project", default=None, help="프로젝트명 (미지정 시 인터랙티브 입력)")
+    parser.add_argument("--round", default=None, help="차수 (예: 3.3차)")
+    parser.add_argument("--optical", default=None, choices=["EN", "CN", "NONE"], help="기준 옵티컬 언어")
+    parser.add_argument("--record", default=None, choices=["KR", "EN", "JP"], help="녹음 언어")
     parser.add_argument("--summary", default="both", choices=["lines", "words", "both"],
-                        help="개괄 시트 집계 표시 방식: lines=라인수만 / words=단어수만 / both=둘 다 (기본값)")
+                        help="개괄 시트 집계 표시 방식: lines=라인수만 / words=단어수만 / both=둘 다")
     parser.add_argument("--no-overview", action="store_true",
                         help="개괄 시트를 합본에 포함하지 않음")
     args = parser.parse_args()
@@ -44,17 +54,43 @@ def main():
         print("ERROR: Gemini API 키 필요. --api-key 또는 환경변수 GEMINI_API_KEY 설정")
         sys.exit(1)
 
+    # ── 프로파일 선택 ─────────────────────────────────────────
+    # CLI에서 모든 옵션 지정 시 non-interactive, 아니면 인터랙티브
+    all_specified = (args.profile and args.project and args.round is not None
+                     and args.optical and args.record)
+    if all_specified:
+        profile      = load_profile(args.profile)
+        project_name = args.project
+        round_str    = args.round or ""
+        record       = args.record
+        optical      = args.optical
+    else:
+        profile, project_name, round_str, record, optical = select_profile_interactive()
+        # CLI 인자로 덮어쓰기 가능
+        if args.profile:
+            profile = load_profile(args.profile)
+        if args.project:
+            project_name = args.project
+        if args.round is not None:
+            round_str = args.round
+        if args.optical:
+            optical = args.optical
+        if args.record:
+            record = args.record
+
+    project_title = f"{project_name} {round_str}".strip()
+
     _init_cache(args.output)
     _cache = _load_cache()
-    client = GeminiClient(args.api_key)
-    project_title = f"{args.project} {args.round}".strip()
+    client = GeminiClient(args.api_key, profile=profile)
 
     print(f"\n{'='*60}")
     print(f"  합본 자동화 시작")
+    print(f"  프로파일: {profile['display_name']}")
     print(f"  프로젝트: {project_title}")
+    print(f"  녹음언어: {record}  /  옵티컬: {optical}")
     print(f"  소스: {args.source}")
     print(f"  출력: {args.output}")
-    print(f"  옵티컬: {args.optical}")
     print(f"{'='*60}\n")
 
     # 1. 파일 수집
@@ -90,12 +126,12 @@ def main():
 
             preview = _load_preview(wb[sname], 15)
             # 녹음 언어 빠른 체크
-            if not _has_record_lang(preview, args.record):
-                print(f"  [{sname}] 녹음 언어({args.record}) 없음 → 스킵")
-                _log(log_entries, fpath.name, sname, f"녹음 언어({args.record}) 대사 없음")
+            if not _has_record_lang(preview, record):
+                print(f"  [{sname}] 녹음 언어({record}) 없음 → 스킵")
+                _log(log_entries, fpath.name, sname, f"녹음 언어({record}) 대사 없음")
                 continue
 
-            ckey = _cache_key(fpath.name, sname, args.optical, args.record)
+            ckey = _cache_key(fpath.name, sname, optical, record)
             if ckey in _cache:
                 cls = _cache[ckey]
                 print(f"  [{sname}] (캐시) {cls['type']}")
@@ -108,7 +144,7 @@ def main():
                 continue
             print(f"  [{sname}] 분류 중...", end=" ", flush=True)
             try:
-                cls = client.classify_sheet(fpath.name, sname, preview, args.optical)
+                cls = client.classify_sheet(fpath.name, sname, preview, optical)
                 if cls["type"] == "SKIP":
                     reason = cls.get("skip_reason") or "분류 불가"
                     print(f"SKIP ({reason})")
@@ -131,9 +167,13 @@ def main():
 
     print(f"\n[분류 완료] {len(classifications)}개 시트 처리 예정\n")
 
-    # 녹음 언어를 cls에 주입 (processor 함수들이 언어별 처리에 사용)
+    # 녹음 언어 + 프로파일 정보를 cls에 주입
     for item in classifications:
-        item["cls"] = {**item["cls"], "_record": args.record}
+        item["cls"] = {
+            **item["cls"],
+            "_record": record,
+            "_functional_prefix": profile.get("functional_emotion_prefix", True),
+        }
 
     # 3. 처리
     processed = []
@@ -156,7 +196,7 @@ def main():
 
         try:
             if t == "Type_명방캐릭터":
-                out_name = _make_sheet_name(fname, sname, cls)
+                out_name = _resolve_sheet_name(profile, fname, sname, cls)
                 processed.append({
                     "sheet_name_out": out_name,
                     "type": t,
@@ -207,7 +247,7 @@ def main():
                 ws = wb[sname]
                 rows = process_sheet(ws, cls)
                 wb.close()
-                out_name = _make_sheet_name(fname, sname, cls)
+                out_name = _resolve_sheet_name(profile, fname, sname, cls)
                 images = extract_images_for_sheet(fpath, sname, cls)
                 processed.append({
                     "sheet_name_out": out_name,
@@ -236,7 +276,7 @@ def main():
                     if dominant and ratio >= 0.3:  # 30% 이상이어야 단일캐릭터 PV
                         cls = dict(cls)
                         cls["char_name_kr"] = dominant
-                out_name = _make_sheet_name(fname, sname, cls)
+                out_name = _resolve_sheet_name(profile, fname, sname, cls)
                 processed.append({
                     "sheet_name_out": out_name,
                     "type": t,
@@ -263,7 +303,7 @@ def main():
     elif not output.lower().endswith(".xlsx"):
         output += ".xlsx"
     os.makedirs(Path(output).parent, exist_ok=True)
-    build_hapbon(processed, log_entries, project_title, output, args.optical,
+    build_hapbon(processed, log_entries, project_title, output, optical,
                  summary_mode=args.summary,
                  include_summary=not args.no_overview)
 
@@ -353,6 +393,13 @@ def _has_record_lang(preview: list[list], record: str) -> bool:
 
 def _log(log_entries: list, file: str, sheet: str, reason: str):
     log_entries.append({"file": file, "sheet": sheet, "reason": reason})
+
+
+def _resolve_sheet_name(profile: dict, fname: str, sname: str, cls: dict) -> str:
+    """프로파일에 따라 탭명 생성 함수를 선택."""
+    if profile.get("tab_naming") == "reverse1999":
+        return make_sheet_name_rv1999(fname, sname, cls)
+    return _make_sheet_name(fname, sname, cls)
 
 
 def _make_sheet_name(fname: str, sname: str, cls: dict) -> str:

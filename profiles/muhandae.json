@@ -1,0 +1,13 @@
+{
+  "id": "muhandae",
+  "display_name": "무한대 (기획 중)",
+  "description": "무한대 프로젝트 전용 — 개발 예정",
+  "defaults": {
+    "record": "KR",
+    "optical": "CN"
+  },
+  "classify_extra": "",
+  "functional_emotion_prefix": false,
+  "tab_naming": "standard",
+  "_note": "개발 예정 프로파일입니다."
+}

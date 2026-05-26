@@ -515,8 +515,8 @@ def _extract_chara(ws, cls: dict) -> list[dict]:
             emotion_rec = (emotion_rec or "") + "[번역 없음]"
 
         emotion = emotion_rec or emotion_cn or ""
-        # 功能을 감정 앞에 참고 정보로 붙임
-        if functional:
+        # 功能을 감정 앞에 참고 정보로 붙임 (프로파일 설정에 따라)
+        if functional and cls.get("_functional_prefix", True):
             emotion = f"[{functional}] {emotion}".strip()
 
         result.append({
