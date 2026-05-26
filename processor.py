@@ -248,11 +248,11 @@ def _extract_main(ws, cls: dict) -> list[dict]:
     header_row = cls.get("header_row", 0)
     record     = cls.get("_record", "KR")
     cf = cls.get("col_filename", -1)
-    ckr = cls.get("col_char_kr", -1)
+    ckr = cls.get("col_char_rec", -1)
     ckn = cls.get("col_char_cn", -1)
-    ekr = cls.get("col_emotion_kr", -1)
+    ekr = cls.get("col_emotion_rec", -1)
     ecn = cls.get("col_emotion_cn", -1)
-    dkr = cls.get("col_dialogue_kr", -1)
+    dkr = cls.get("col_dialogue_rec", -1)
     dcn = cls.get("col_dialogue_cn", -1)
     opt = cls.get("col_optical", -1)
     alt = cls.get("col_alt", -1)
@@ -266,11 +266,11 @@ def _extract_main(ws, cls: dict) -> list[dict]:
     result = []
     for abs_idx, row_vals in enumerate(_ws_rows(ws, header_row), start=header_row + 1):
         filename = _cell(row_vals, cf)
-        char_kr = _cell(row_vals, ckr)
+        char_rec = _cell(row_vals, ckr)
         char_cn = _cell(row_vals, ckn)
-        dialogue_kr = _cell(row_vals, dkr)
+        dialogue_rec = _cell(row_vals, dkr)
         dialogue_cn = _cell(row_vals, dcn)
-        emotion_kr = _cell(row_vals, ekr)
+        emotion_rec = _cell(row_vals, ekr)
         emotion_cn = _cell(row_vals, ecn)
         optical = _cell(row_vals, opt)
         alt_val = _cell(row_vals, alt)
@@ -281,9 +281,9 @@ def _extract_main(ws, cls: dict) -> list[dict]:
             continue
 
         # 스킵: 헤더 반복 행
-        if char_kr in _HEADER_CHAR_VALUES or char_cn in _HEADER_CHAR_VALUES:
+        if char_rec in _HEADER_CHAR_VALUES or char_cn in _HEADER_CHAR_VALUES:
             continue
-        if dialogue_kr in _HEADER_DIAL_VALUES or dialogue_cn in _HEADER_DIAL_VALUES:
+        if dialogue_rec in _HEADER_DIAL_VALUES or dialogue_cn in _HEADER_DIAL_VALUES:
             continue
 
         # 스킵: 녹음 불필요 표기 행
@@ -292,34 +292,34 @@ def _extract_main(ws, cls: dict) -> list[dict]:
             continue
 
         # 스킵: 파일명도 없고 대사도 없고 캐릭터도 없는 완전 빈 행
-        if not filename and not dialogue_kr and not dialogue_cn and not char_kr and not char_cn:
+        if not filename and not dialogue_rec and not dialogue_cn and not char_rec and not char_cn:
             continue
 
         # 스킵: 회색 처리된 행 (번역 없음 + 회색 = 완전 제외)
-        if abs_idx in gray_rows and not dialogue_kr:
+        if abs_idx in gray_rows and not dialogue_rec:
             continue
 
         # 내레이션 스텝 → "내레이션" 정규화
         if step and step in _NARRATION_STEPS:
-            char_kr = "내레이션"
+            char_rec = "내레이션"
 
         # 녹음 대상 대사 없고 CN만 있는 경우
-        if not dialogue_kr and dialogue_cn:
-            emotion_kr = (emotion_kr or "") + "[번역 없음]"
+        if not dialogue_rec and dialogue_cn:
+            emotion_rec = (emotion_rec or "") + "[번역 없음]"
 
         # 감정: 녹음언어 우선, 없으면 CN
-        emotion = emotion_kr or emotion_cn or ""
+        emotion = emotion_rec or emotion_cn or ""
 
         result.append({
             "파일명": filename or "",
-            "캐릭터명": char_kr or char_cn or "",
+            "캐릭터명": char_rec or char_cn or "",
             "감정": emotion,
             "REC": "",
-            "대사": dialogue_kr or "",
+            "대사": dialogue_rec or "",
             "ALT": alt_val or "",
             "옵티컬(원문)": optical or dialogue_cn or "",
             "⏱ 검수": "",
-            "_peak": _is_peak(dialogue_kr or "", record),
+            "_peak": _is_peak(dialogue_rec or "", record),
             "_extra_cols": _collect_extra(row_vals, used, header),
         })
     return result
@@ -330,11 +330,11 @@ def _extract_main(ws, cls: dict) -> list[dict]:
 def _extract_pv(ws, cls: dict) -> list[dict]:
     header_row = cls.get("header_row", 0)
     record     = cls.get("_record", "KR")
-    ckr = cls.get("col_char_kr", -1)
+    ckr = cls.get("col_char_rec", -1)
     ckn = cls.get("col_char_cn", -1)
-    ekr = cls.get("col_emotion_kr", -1)
+    ekr = cls.get("col_emotion_rec", -1)
     ecn = cls.get("col_emotion_cn", -1)
-    dkr = cls.get("col_dialogue_kr", -1)
+    dkr = cls.get("col_dialogue_rec", -1)
     dcn = cls.get("col_dialogue_cn", -1)
     opt = cls.get("col_optical", -1)
     alt = cls.get("col_alt", -1)
@@ -346,18 +346,18 @@ def _extract_pv(ws, cls: dict) -> list[dict]:
 
     result = []
     for abs_idx, row_vals in enumerate(_ws_rows(ws, header_row), start=header_row + 1):
-        char_kr = _cell(row_vals, ckr)
+        char_rec = _cell(row_vals, ckr)
         char_cn = _cell(row_vals, ckn)
-        dialogue_kr = _cell(row_vals, dkr)
+        dialogue_rec = _cell(row_vals, dkr)
         dialogue_cn = _cell(row_vals, dcn)
-        emotion_kr = _cell(row_vals, ekr)
+        emotion_rec = _cell(row_vals, ekr)
         emotion_cn = _cell(row_vals, ecn)
         optical = _cell(row_vals, opt)
         alt_val = _cell(row_vals, alt)
         duration_raw = _cell(row_vals, dur)
 
         # 빈 행 스킵
-        if not char_kr and not char_cn and not dialogue_kr and not dialogue_cn:
+        if not char_rec and not char_cn and not dialogue_rec and not dialogue_cn:
             continue
 
         # 스킵: 녹음 불필요 표기 행
@@ -366,26 +366,26 @@ def _extract_pv(ws, cls: dict) -> list[dict]:
             continue
 
         # 스킵: 회색 처리된 행
-        if abs_idx in gray_rows and not dialogue_kr:
+        if abs_idx in gray_rows and not dialogue_rec:
             continue
 
         # 내레이션 정규화 (캐릭터 없고 대사만 있는 행)
-        if not char_kr and not char_cn and (dialogue_kr or dialogue_cn):
-            char_kr = "내레이션"
+        if not char_rec and not char_cn and (dialogue_rec or dialogue_cn):
+            char_rec = "내레이션"
 
-        emotion = emotion_kr or emotion_cn or ""
-        timing = _timing_flag(dialogue_kr or "", duration_raw, record) if dur >= 0 else ""
+        emotion = emotion_rec or emotion_cn or ""
+        timing = _timing_flag(dialogue_rec or "", duration_raw, record) if dur >= 0 else ""
 
         result.append({
             "파일명": "",
-            "캐릭터명": char_kr or char_cn or "",
+            "캐릭터명": char_rec or char_cn or "",
             "감정": emotion,
             "REC": "",
-            "대사": dialogue_kr or "",
+            "대사": dialogue_rec or "",
             "ALT": alt_val or "",
             "옵티컬(원문)": optical or dialogue_cn or "",
             "⏱ 검수": timing,
-            "_peak": _is_peak(dialogue_kr or "", record),
+            "_peak": _is_peak(dialogue_rec or "", record),
             "_timing_over": bool(timing),
             "_extra_cols": _collect_extra(row_vals, used, header),
         })
@@ -398,11 +398,11 @@ def _extract_battle(ws, cls: dict) -> list[dict]:
     header_row = cls.get("header_row", 0)
     record     = cls.get("_record", "KR")
     cf = cls.get("col_filename", -1)
-    ckr = cls.get("col_char_kr", -1)
+    ckr = cls.get("col_char_rec", -1)
     ckn = cls.get("col_char_cn", -1)
-    ekr = cls.get("col_emotion_kr", -1)
+    ekr = cls.get("col_emotion_rec", -1)
     ecn = cls.get("col_emotion_cn", -1)
-    dkr = cls.get("col_dialogue_kr", -1)
+    dkr = cls.get("col_dialogue_rec", -1)
     dcn = cls.get("col_dialogue_cn", -1)
     opt = cls.get("col_optical", -1)
     alt = cls.get("col_alt", -1)
@@ -415,24 +415,24 @@ def _extract_battle(ws, cls: dict) -> list[dict]:
     result = []
     for abs_idx, row_vals in enumerate(_ws_rows(ws, header_row), start=header_row + 1):
         filename = _cell(row_vals, cf)
-        char_kr = _cell(row_vals, ckr)
+        char_rec = _cell(row_vals, ckr)
         char_cn = _cell(row_vals, ckn)
-        dialogue_kr = _cell(row_vals, dkr)
+        dialogue_rec = _cell(row_vals, dkr)
         dialogue_cn = _cell(row_vals, dcn)
-        emotion_kr = _cell(row_vals, ekr)
+        emotion_rec = _cell(row_vals, ekr)
         emotion_cn = _cell(row_vals, ecn)
         optical = _cell(row_vals, opt)
         alt_val = _cell(row_vals, alt)
         process_val = _cell(row_vals, process_col)
 
         # 파트 제목 행 스킵
-        if process_val and not char_kr and not char_cn and not dialogue_kr and not dialogue_cn:
+        if process_val and not char_rec and not char_cn and not dialogue_rec and not dialogue_cn:
             continue
 
         # 헤더 반복 행 스킵
-        if char_kr in _HEADER_CHAR_VALUES or char_cn in _HEADER_CHAR_VALUES:
+        if char_rec in _HEADER_CHAR_VALUES or char_cn in _HEADER_CHAR_VALUES:
             continue
-        if dialogue_kr in _HEADER_DIAL_VALUES or dialogue_cn in _HEADER_DIAL_VALUES:
+        if dialogue_rec in _HEADER_DIAL_VALUES or dialogue_cn in _HEADER_DIAL_VALUES:
             continue
 
         # 스킵: 녹음 불필요 표기 행
@@ -441,24 +441,24 @@ def _extract_battle(ws, cls: dict) -> list[dict]:
             continue
 
         # 완전 빈 행 스킵
-        if not filename and not char_kr and not char_cn and not dialogue_kr and not dialogue_cn:
+        if not filename and not char_rec and not char_cn and not dialogue_rec and not dialogue_cn:
             continue
 
         # 스킵: 회색 처리된 행
-        if abs_idx in gray_rows and not dialogue_kr:
+        if abs_idx in gray_rows and not dialogue_rec:
             continue
 
-        emotion = emotion_kr or emotion_cn or ""
+        emotion = emotion_rec or emotion_cn or ""
         result.append({
             "파일명": filename or "",
-            "캐릭터명": char_kr or char_cn or "",
+            "캐릭터명": char_rec or char_cn or "",
             "감정": emotion,
             "REC": "",
-            "대사": dialogue_kr or "",
+            "대사": dialogue_rec or "",
             "ALT": alt_val or "",
             "옵티컬(원문)": optical or dialogue_cn or "",
             "⏱ 검수": "",
-            "_peak": _is_peak(dialogue_kr or "", record),
+            "_peak": _is_peak(dialogue_rec or "", record),
             "_extra_cols": _collect_extra(row_vals, used, header),
         })
     return result
@@ -471,9 +471,9 @@ def _extract_chara(ws, cls: dict) -> list[dict]:
     record     = cls.get("_record", "KR")
     cf = cls.get("col_filename", -1)
     char_name = cls.get("char_name_kr") or ""
-    ekr = cls.get("col_emotion_kr", -1)
+    ekr = cls.get("col_emotion_rec", -1)
     ecn = cls.get("col_emotion_cn", -1)
-    dkr = cls.get("col_dialogue_kr", -1)
+    dkr = cls.get("col_dialogue_rec", -1)
     dcn = cls.get("col_dialogue_cn", -1)
     opt = cls.get("col_optical", -1)
     alt = cls.get("col_alt", -1)
@@ -486,19 +486,19 @@ def _extract_chara(ws, cls: dict) -> list[dict]:
     result = []
     for abs_idx, row_vals in enumerate(_ws_rows(ws, header_row), start=header_row + 1):
         filename = _cell(row_vals, cf)
-        dialogue_kr = _cell(row_vals, dkr)
+        dialogue_rec = _cell(row_vals, dkr)
         dialogue_cn = _cell(row_vals, dcn)
-        emotion_kr = _cell(row_vals, ekr)
+        emotion_rec = _cell(row_vals, ekr)
         emotion_cn = _cell(row_vals, ecn)
         optical = _cell(row_vals, opt)
         alt_val = _cell(row_vals, alt)
         functional = _cell(row_vals, func_col)
 
         # 빈 행 스킵
-        if not filename and not dialogue_kr and not dialogue_cn:
+        if not filename and not dialogue_rec and not dialogue_cn:
             continue
         # 헤더 반복 행 스킵
-        if dialogue_kr in _HEADER_DIAL_VALUES or filename in _HEADER_FILE_VALUES:
+        if dialogue_rec in _HEADER_DIAL_VALUES or filename in _HEADER_FILE_VALUES:
             continue
 
         # 스킵: 녹음 불필요 표기 행
@@ -507,14 +507,14 @@ def _extract_chara(ws, cls: dict) -> list[dict]:
             continue
 
         # 스킵: 회색 처리된 행
-        if abs_idx in gray_rows and not dialogue_kr:
+        if abs_idx in gray_rows and not dialogue_rec:
             continue
 
         # 녹음 대상 대사 없고 원문만 있는 경우
-        if not dialogue_kr and dialogue_cn:
-            emotion_kr = (emotion_kr or "") + "[번역 없음]"
+        if not dialogue_rec and dialogue_cn:
+            emotion_rec = (emotion_rec or "") + "[번역 없음]"
 
-        emotion = emotion_kr or emotion_cn or ""
+        emotion = emotion_rec or emotion_cn or ""
         # 功能을 감정 앞에 참고 정보로 붙임
         if functional:
             emotion = f"[{functional}] {emotion}".strip()
@@ -524,11 +524,11 @@ def _extract_chara(ws, cls: dict) -> list[dict]:
             "캐릭터명": char_name,
             "감정": emotion,
             "REC": "",
-            "대사": dialogue_kr or "",
+            "대사": dialogue_rec or "",
             "ALT": alt_val or "",
             "옵티컬(원문)": optical or dialogue_cn or "",
             "⏱ 검수": "",
-            "_peak": _is_peak(dialogue_kr or "", record),
+            "_peak": _is_peak(dialogue_rec or "", record),
             "_extra_cols": _collect_extra(row_vals, used, header),
         })
     return result
@@ -545,11 +545,11 @@ def _extract_short(ws, cls: dict) -> list[dict]:
     header_row = cls.get("header_row", 0)
     record     = cls.get("_record", "KR")
     cf  = cls.get("col_filename",    -1)
-    ckr = cls.get("col_char_kr",     -1)
+    ckr = cls.get("col_char_rec",     -1)
     ckn = cls.get("col_char_cn",     -1)
-    ekr = cls.get("col_emotion_kr",  -1)
+    ekr = cls.get("col_emotion_rec",  -1)
     ecn = cls.get("col_emotion_cn",  -1)
-    dkr = cls.get("col_dialogue_kr", -1)
+    dkr = cls.get("col_dialogue_rec", -1)
     dcn = cls.get("col_dialogue_cn", -1)
     opt = cls.get("col_optical",     -1)
     alt = cls.get("col_alt",         -1)
@@ -587,20 +587,20 @@ def _extract_short(ws, cls: dict) -> list[dict]:
         row_vals = list(row_vals)
 
         filename    = _mv(row_vals, i, cf)
-        char_kr     = _mv(row_vals, i, ckr)
+        char_rec     = _mv(row_vals, i, ckr)
         char_cn     = _mv(row_vals, i, ckn)
-        emotion_kr  = _mv(row_vals, i, ekr)
+        emotion_rec  = _mv(row_vals, i, ekr)
         emotion_cn  = _mv(row_vals, i, ecn)
-        dialogue_kr = _mv(row_vals, i, dkr)
+        dialogue_rec = _mv(row_vals, i, dkr)
         dialogue_cn = _mv(row_vals, i, dcn)
         optical     = _mv(row_vals, i, opt)
         alt_val     = _mv(row_vals, i, alt)
 
         # 대사 없는 행 스킵
-        if not dialogue_kr and not dialogue_cn:
+        if not dialogue_rec and not dialogue_cn:
             continue
         # 파일명·대사 둘 다 없는 행도 스킵
-        if not filename and not dialogue_kr:
+        if not filename and not dialogue_rec:
             continue
 
         # 스킵: 녹음 불필요 표기 행
@@ -609,23 +609,23 @@ def _extract_short(ws, cls: dict) -> list[dict]:
             continue
 
         # 스킵: 회색 처리된 행 (i = 절대 row 인덱스, 녹음 언어 대사 없으면 제외)
-        if i in gray_rows and not dialogue_kr:
+        if i in gray_rows and not dialogue_rec:
             continue
 
-        if not dialogue_kr and dialogue_cn:
-            emotion_kr = (emotion_kr or "") + "[번역 없음]"
+        if not dialogue_rec and dialogue_cn:
+            emotion_rec = (emotion_rec or "") + "[번역 없음]"
 
-        emotion = emotion_kr or emotion_cn or ""
+        emotion = emotion_rec or emotion_cn or ""
         result.append({
             "파일명":       filename or "",
-            "캐릭터명":     char_kr or char_cn or "",
+            "캐릭터명":     char_rec or char_cn or "",
             "감정":         emotion,
             "REC":          "",
-            "대사":         dialogue_kr or "",
+            "대사":         dialogue_rec or "",
             "ALT":          alt_val or "",
             "옵티컬(원문)": optical or dialogue_cn or "",
             "⏱ 검수":      "",
-            "_peak":        _is_peak(dialogue_kr or "", record),
+            "_peak":        _is_peak(dialogue_rec or "", record),
             "_extra_cols":  _collect_extra(row_vals, used, header),
         })
     return result
@@ -637,9 +637,9 @@ def _extract_infinite(ws, cls: dict) -> list[dict]:
     header_row = cls.get("header_row", 0)
     record     = cls.get("_record", "KR")
     cf = cls.get("col_filename", -1)
-    ckr = cls.get("col_char_kr", -1)
+    ckr = cls.get("col_char_rec", -1)
     ckn = cls.get("col_char_cn", -1)
-    dkr = cls.get("col_dialogue_kr", -1)
+    dkr = cls.get("col_dialogue_rec", -1)
     dcn = cls.get("col_dialogue_cn", -1)
     opt = cls.get("col_optical", -1)
     adr_col = cls.get("col_adr_wild", -1)
@@ -672,15 +672,15 @@ def _extract_infinite(ws, cls: dict) -> list[dict]:
                 continue
 
         filename = _cell(row_vals, cf)
-        char_kr = _cell(row_vals, ckr)
+        char_rec = _cell(row_vals, ckr)
         char_cn = _cell(row_vals, ckn)
-        dialogue_kr = _cell(row_vals, dkr)
+        dialogue_rec = _cell(row_vals, dkr)
         dialogue_cn = _cell(row_vals, dcn)
         optical = _cell(row_vals, opt)
         adr_wild = _cell(row_vals, adr_col)
         timecode = _cell(row_vals, tc_col)
 
-        if not dialogue_kr and not dialogue_cn:
+        if not dialogue_rec and not dialogue_cn:
             continue
 
         # 스킵: 녹음 불필요 표기 행
@@ -689,7 +689,7 @@ def _extract_infinite(ws, cls: dict) -> list[dict]:
             continue
 
         # 스킵: 회색 처리된 행
-        if abs_idx in gray_rows and not dialogue_kr:
+        if abs_idx in gray_rows and not dialogue_rec:
             continue
 
         # 타임코드에서 duration 계산
@@ -697,20 +697,20 @@ def _extract_infinite(ws, cls: dict) -> list[dict]:
         if timecode and "-->" in str(timecode):
             dur = _parse_timecode_duration(str(timecode))
             if dur:
-                timing = _timing_flag(dialogue_kr or "", f"{dur}s", record)
+                timing = _timing_flag(dialogue_rec or "", f"{dur}s", record)
 
         result.append({
             "파일명": filename or "",
-            "캐릭터명": char_kr or char_cn or "",
+            "캐릭터명": char_rec or char_cn or "",
             "감정": "",
             "ADR/Wild": adr_wild or "",
             "타임코드": timecode or "",
             "REC": "",
-            "대사": dialogue_kr or "",
+            "대사": dialogue_rec or "",
             "ALT": "",
             "옵티컬(원문)": optical or dialogue_cn or "",
             "⏱ 검수": timing,
-            "_peak": _is_peak(dialogue_kr or ""),
+            "_peak": _is_peak(dialogue_rec or ""),
             "_timing_over": bool(timing),
             "_extra_cols": _collect_extra(row_vals, used, header),
         })
@@ -862,7 +862,7 @@ def extract_images_for_sheet(fpath: str, sname: str, cls: dict) -> list[dict]:
     if not images:
         return []
 
-    ckr = cls.get("col_char_kr", -1)
+    ckr = cls.get("col_char_rec", -1)
     ckn = cls.get("col_char_cn", -1)
 
     # 병합셀 → row(0-based) → char 이름

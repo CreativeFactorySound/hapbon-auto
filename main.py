@@ -200,7 +200,7 @@ def main():
 
             elif t == "Type_짧은음성":
                 # 병합셀 처리: read_only=False 필요 (gray scan도 동시 처리)
-                gray = scan_gray_rows(fpath, sname, cls.get("col_dialogue_kr", -1), cls.get("header_row", 0))
+                gray = scan_gray_rows(fpath, sname, cls.get("col_dialogue_rec", -1), cls.get("header_row", 0))
                 if gray:
                     cls = {**cls, "_gray_rows": gray}
                 wb = openpyxl.load_workbook(fpath, data_only=True)
@@ -222,7 +222,7 @@ def main():
 
             else:
                 # gray 셀 스캔 (read_only=False로 미리 열어서 스타일 확인)
-                gray = scan_gray_rows(fpath, sname, cls.get("col_dialogue_kr", -1), cls.get("header_row", 0))
+                gray = scan_gray_rows(fpath, sname, cls.get("col_dialogue_rec", -1), cls.get("header_row", 0))
                 if gray:
                     cls = {**cls, "_gray_rows": gray}
                 wb = openpyxl.load_workbook(fpath, data_only=True, read_only=True)
@@ -414,10 +414,20 @@ def _init_cache(output_path: str):
 def _cache_key(fname: str, sname: str, optical: str = "", record: str = "") -> str:
     return hashlib.md5(f"{fname}||{sname}||{optical}||{record}".encode()).hexdigest()
 
+def _migrate_cls(cls: dict) -> dict:
+    """구버전 캐시 키 자동 마이그레이션 (_kr → _rec)."""
+    renames = {
+        "col_dialogue_kr": "col_dialogue_rec",
+        "col_char_kr":     "col_char_rec",
+        "col_emotion_kr":  "col_emotion_rec",
+    }
+    return {renames.get(k, k): v for k, v in cls.items()}
+
 def _load_cache() -> dict:
     if _CACHE_FILE and _CACHE_FILE.exists():
         try:
-            return _json_mod.loads(_CACHE_FILE.read_text(encoding="utf-8"))
+            raw = _json_mod.loads(_CACHE_FILE.read_text(encoding="utf-8"))
+            return {k: _migrate_cls(v) for k, v in raw.items()}
         except Exception:
             pass
     return {}

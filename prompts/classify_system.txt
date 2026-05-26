@@ -45,30 +45,30 @@ row0~row7 중 아래 키워드가 가장 많이 포함된 행. 헤더 위 행들
 - "CBT2" 포함 열 → 구버전 파일명 열, col_filename으로 지정 금지 (-1로 처리)
 - 파일명 열이 여러 개인 경우: 행마다 고유한 값 중 납품 규격에 가장 가까운 것을 선택, 나머지는 매핑 제외
 
-■ col_char_kr / col_char_cn (캐릭터명 열)
-- col_char_kr: 배음대상/더빙 대상/캐릭터/화자/キャラ/Character 헤더 OR 한국어·일본어 인명이 있는 열
+■ col_char_rec / col_char_cn (캐릭터명 열)
+- col_char_rec: 배음대상/더빙 대상/캐릭터/화자/キャラ/Character 헤더 OR 녹음 언어(KR=한국어, JP=일본어, EN=영어) 인명이 있는 열
 - col_char_cn: 配音对象/角色 헤더 OR 중국어 인명이 있는 열
 - "???" 표기 → 게임 내 숨김 처리된 캐릭터명, 그대로 사용
 - "<player>", "玩家", "유저" → 플레이어 캐릭터, 그대로 사용
 - 동일 값이 여러 행 연속 (병합셀 흔적) → Type_짧은음성 신호
 
-■ col_dialogue_kr / col_dialogue_cn (대사 열)
-- col_dialogue_kr: 녹음 받는 언어의 주 대사 열. KR이면 가장 긴 한국어 문장 열, JP이면 台詞 등 일본어 대사 열, EN이면 영어 대사 열. 절대 col_dialogue_cn이나 col_optical에 넣지 말 것.
+■ col_dialogue_rec / col_dialogue_cn (대사 열)
+- col_dialogue_rec: 녹음 받는 언어의 주 대사 열. KR이면 가장 긴 한국어 문장 열, JP이면 台詞 등 일본어 대사 열, EN이면 영어 대사 열. 절대 col_dialogue_cn이나 col_optical에 넣지 말 것.
 - col_dialogue_cn: 对话文本/终选语音/中(...) 등 중국어 원문 대사 열. JP 스크립트에 중국어가 없으면 -1.
 - "eff(...)", "(호흡 지문)", "(기합)" 형태 → 대사 열에 포함되는 효과음/호흡 표기이므로 대사 열 판단에 포함
 
-■ col_emotion_kr / col_emotion_cn (감정 열)
+■ col_emotion_rec / col_emotion_cn (감정 열)
 - 헤더 키워드: 말투/감정/詳細/语气/配音备注/情绪/状態/语音备注 등
 - 헤더가 달라도(화면/画面/步骤 등) 셀 값들이 짧은 감정·행동 묘사 문장이면 감정 열로 판단
   예: "露米叹气", "愤怒地说", "打滚耍赖的样子", "落ち込んで", "뛰면서", "조금 엄숙하게"
   → 연출 씬 설명("PART1 전투 진입", "화면 전환")과 구별할 것
 
-- [핵심 규칙] CN 감정 열과 KR 감정 열이 모두 있는 경우 반드시 구분할 것:
+- [핵심 규칙] CN 감정 열과 rec(녹음 언어) 감정 열이 모두 있는 경우 반드시 구분할 것:
   · col_emotion_cn: 한자(중국어) 값이 주를 이루는 열 (예: 语气备注 원본)
-  · col_emotion_kr: 녹음 언어(KR=한국어, JP=일본어, EN=영어) 값이 있는 열
-  · 헤더에 "KR" / "韩" / "한국어" 접미사가 있으면 무조건 col_emotion_kr
-  · 두 열 모두 존재할 때 중국어 열을 col_emotion_kr로 지정하는 것은 오류
-  · 셀 값의 언어를 직접 확인: 한글 포함 열 → col_emotion_kr, 한자 위주 열 → col_emotion_cn
+  · col_emotion_rec: 녹음 언어(KR=한국어, JP=일본어, EN=영어) 값이 있는 열
+  · 헤더에 "KR" / "韩" / "한국어" / "JP" / "日" / "EN" 접미사가 있으면 무조건 col_emotion_rec
+  · 두 열 모두 존재할 때 중국어 열을 col_emotion_rec로 지정하는 것은 오류
+  · 셀 값의 언어를 직접 확인: 녹음 언어 텍스트 포함 열 → col_emotion_rec, 한자 위주 열 → col_emotion_cn
 
 ■ col_optical (옵티컬 열)
 - optical=EN이면 영어 대사 열, optical=CN이면 중국어 대사 열. 해당 언어 열 없으면 -1.
@@ -103,4 +103,4 @@ row0~row7 중 아래 키워드가 가장 많이 포함된 행. 헤더 위 행들
 → 이 열들은 매핑하지 않아도 processor가 자동으로 오른쪽 숨김 열로 보존함
 
 [JSON 출력 스키마 — 이것만 출력]
-{"type":"...","skip_reason":null,"header_row":0,"col_filename":-1,"col_char_kr":-1,"col_char_cn":-1,"col_emotion_kr":-1,"col_emotion_cn":-1,"col_dialogue_kr":-1,"col_dialogue_cn":-1,"col_optical":-1,"optical_used":"EN","col_alt":-1,"col_duration":-1,"col_step_type":-1,"skip_step_values":[],"col_functional":-1,"col_adr_wild":-1,"col_timecode":-1,"char_name_kr":null,"battle_role":"unknown","notes":""}
+{"type":"...","skip_reason":null,"header_row":0,"col_filename":-1,"col_char_rec":-1,"col_char_cn":-1,"col_emotion_rec":-1,"col_emotion_cn":-1,"col_dialogue_rec":-1,"col_dialogue_cn":-1,"col_optical":-1,"optical_used":"EN","col_alt":-1,"col_duration":-1,"col_step_type":-1,"skip_step_values":[],"col_functional":-1,"col_adr_wild":-1,"col_timecode":-1,"char_name_kr":null,"battle_role":"unknown","notes":""}
