@@ -138,6 +138,19 @@ def _get_header(ws, header_row: int) -> list[str]:
     return []
 
 
+# 비고/备注 계열 헤더 키워드 — 감정 열 폴백 소스
+_NOTE_KEYWORDS = {"비고", "配音备注", "备注", "note", "notes", "remark", "remarks", "메모", "비고란"}
+
+
+def _find_note_col(header: list) -> int:
+    """비고/备注 계열 열 인덱스 반환. 없으면 -1.
+    감정(emotion_rec/cn) 열이 모두 비었을 때 폴백으로 사용."""
+    for i, h in enumerate(header):
+        if h and str(h).strip().lower() in _NOTE_KEYWORDS:
+            return i
+    return -1
+
+
 def _collect_extra(row_vals: list, used: set, header: list) -> dict:
     """표준 매핑에 사용되지 않은 열의 값을 {헤더명: 값} 딕셔너리로 반환.
     값이 있는 열만 포함하며, 동일 헤더명 중복 시 _{col번호} 접미사로 구분."""
@@ -272,8 +285,9 @@ def _extract_main(ws, cls: dict) -> list[dict]:
     step_col = cls.get("col_step_type", -1)
     skip_steps = set(cls.get("skip_step_values", []))
 
-    used    = {c for c in [cf, ckr, ckn, ekr, ecn, dkr, dcn, opt, alt, step_col] if c >= 0}
     header  = _get_header(ws, header_row)
+    cn_note = _find_note_col(header)  # 비고/备注 폴백 열
+    used    = {c for c in [cf, ckr, ckn, ekr, ecn, dkr, dcn, opt, alt, step_col, cn_note] if c >= 0}
     gray_rows = cls.get("_gray_rows", set())
 
     result = []
@@ -288,6 +302,7 @@ def _extract_main(ws, cls: dict) -> list[dict]:
         optical = _cell(row_vals, opt)
         alt_val = _cell(row_vals, alt)
         step = _cell(row_vals, step_col)
+        note_val = _cell(row_vals, cn_note)
 
         # 스킵: 씬 타입이 skip_steps에 해당
         if step and step in skip_steps:
@@ -320,8 +335,8 @@ def _extract_main(ws, cls: dict) -> list[dict]:
         if not dialogue_rec and dialogue_cn:
             emotion_rec = (emotion_rec or "") + "[번역 없음]"
 
-        # 감정: 녹음언어 우선, 없으면 CN
-        emotion = emotion_rec or emotion_cn or ""
+        # 감정: 녹음언어 우선 → CN → 비고/备注 폴백
+        emotion = emotion_rec or emotion_cn or note_val or ""
 
         # ???는 녹음 의미 없는 표시명 — 실제 캐릭터명 열 우선, 둘 다 ???면 그대로 사용
         char = _valid_char(char_rec) or _valid_char(char_cn) or char_rec or char_cn or ""
@@ -355,8 +370,9 @@ def _extract_pv(ws, cls: dict) -> list[dict]:
     alt = cls.get("col_alt", -1)
     dur = cls.get("col_duration", -1)
 
-    used   = {c for c in [ckr, ckn, ekr, ecn, dkr, dcn, opt, alt, dur] if c >= 0}
     header = _get_header(ws, header_row)
+    cn_note = _find_note_col(header)
+    used   = {c for c in [ckr, ckn, ekr, ecn, dkr, dcn, opt, alt, dur, cn_note] if c >= 0}
     gray_rows = cls.get("_gray_rows", set())
 
     result = []
@@ -370,6 +386,7 @@ def _extract_pv(ws, cls: dict) -> list[dict]:
         optical = _cell(row_vals, opt)
         alt_val = _cell(row_vals, alt)
         duration_raw = _cell(row_vals, dur)
+        note_val = _cell(row_vals, cn_note)
 
         # 빈 행 스킵
         if not char_rec and not char_cn and not dialogue_rec and not dialogue_cn:
@@ -388,7 +405,7 @@ def _extract_pv(ws, cls: dict) -> list[dict]:
         if not char_rec and not char_cn and (dialogue_rec or dialogue_cn):
             char_rec = "내레이션"
 
-        emotion = emotion_rec or emotion_cn or ""
+        emotion = emotion_rec or emotion_cn or note_val or ""
         timing = _timing_flag(dialogue_rec or "", duration_raw, record) if dur >= 0 else ""
         char = _valid_char(char_rec) or _valid_char(char_cn) or char_rec or char_cn or ""
 
@@ -424,8 +441,9 @@ def _extract_battle(ws, cls: dict) -> list[dict]:
     alt = cls.get("col_alt", -1)
     process_col = cls.get("col_step_type", -1)  # 流程节点
 
-    used   = {c for c in [cf, ckr, ckn, ekr, ecn, dkr, dcn, opt, alt, process_col] if c >= 0}
     header = _get_header(ws, header_row)
+    cn_note = _find_note_col(header)
+    used   = {c for c in [cf, ckr, ckn, ekr, ecn, dkr, dcn, opt, alt, process_col, cn_note] if c >= 0}
     gray_rows = cls.get("_gray_rows", set())
 
     result = []
@@ -440,6 +458,7 @@ def _extract_battle(ws, cls: dict) -> list[dict]:
         optical = _cell(row_vals, opt)
         alt_val = _cell(row_vals, alt)
         process_val = _cell(row_vals, process_col)
+        note_val = _cell(row_vals, cn_note)
 
         # 파트 제목 행 스킵
         if process_val and not char_rec and not char_cn and not dialogue_rec and not dialogue_cn:
@@ -464,7 +483,7 @@ def _extract_battle(ws, cls: dict) -> list[dict]:
         if abs_idx in gray_rows and not dialogue_rec:
             continue
 
-        emotion = emotion_rec or emotion_cn or ""
+        emotion = emotion_rec or emotion_cn or note_val or ""
         char = _valid_char(char_rec) or _valid_char(char_cn) or char_rec or char_cn or ""
         result.append({
             "파일명": filename or "",
@@ -496,8 +515,9 @@ def _extract_chara(ws, cls: dict) -> list[dict]:
     alt = cls.get("col_alt", -1)
     func_col = cls.get("col_functional", -1)
 
-    used   = {c for c in [cf, ekr, ecn, dkr, dcn, opt, alt, func_col] if c >= 0}
     header = _get_header(ws, header_row)
+    cn_note = _find_note_col(header)
+    used   = {c for c in [cf, ekr, ecn, dkr, dcn, opt, alt, func_col, cn_note] if c >= 0}
     gray_rows = cls.get("_gray_rows", set())
 
     result = []
@@ -510,6 +530,7 @@ def _extract_chara(ws, cls: dict) -> list[dict]:
         optical = _cell(row_vals, opt)
         alt_val = _cell(row_vals, alt)
         functional = _cell(row_vals, func_col)
+        note_val = _cell(row_vals, cn_note)
 
         # 빈 행 스킵
         if not filename and not dialogue_rec and not dialogue_cn:
@@ -531,7 +552,7 @@ def _extract_chara(ws, cls: dict) -> list[dict]:
         if not dialogue_rec and dialogue_cn:
             emotion_rec = (emotion_rec or "") + "[번역 없음]"
 
-        emotion = emotion_rec or emotion_cn or ""
+        emotion = emotion_rec or emotion_cn or note_val or ""
         # 功能을 감정 앞에 참고 정보로 붙임 (프로파일 설정에 따라)
         if functional and cls.get("_functional_prefix", True):
             emotion = f"[{functional}] {emotion}".strip()
@@ -592,8 +613,9 @@ def _extract_short(ws, cls: dict) -> list[dict]:
             return mv or None   # 빈 문자열은 None으로
         return _cell(row_vals, col_0)
 
-    used   = {c for c in [cf, ckr, ckn, ekr, ecn, dkr, dcn, opt, alt] if c >= 0}
     header = _get_header(ws, header_row)
+    cn_note = _find_note_col(header)
+    used   = {c for c in [cf, ckr, ckn, ekr, ecn, dkr, dcn, opt, alt, cn_note] if c >= 0}
     gray_rows = cls.get("_gray_rows", set())
 
     result = []
@@ -612,6 +634,7 @@ def _extract_short(ws, cls: dict) -> list[dict]:
         dialogue_cn = _mv(row_vals, i, dcn)
         optical     = _mv(row_vals, i, opt)
         alt_val     = _mv(row_vals, i, alt)
+        note_val    = _mv(row_vals, i, cn_note)
 
         # 대사 없는 행 스킵
         if not dialogue_rec and not dialogue_cn:
@@ -632,7 +655,7 @@ def _extract_short(ws, cls: dict) -> list[dict]:
         if not dialogue_rec and dialogue_cn:
             emotion_rec = (emotion_rec or "") + "[번역 없음]"
 
-        emotion = emotion_rec or emotion_cn or ""
+        emotion = emotion_rec or emotion_cn or note_val or ""
         char = _valid_char(char_rec) or _valid_char(char_cn) or char_rec or char_cn or ""
         result.append({
             "파일명":       filename or "",
