@@ -1,0 +1,12 @@
+{
+  "id": "reverse1999",
+  "display_name": "리버스1999 (Reverse: 1999)",
+  "description": "리버스:1999 한국어 더빙 — HAOplay",
+  "defaults": {
+    "record": "KR",
+    "optical": "EN"
+  },
+  "functional_emotion_prefix": false,
+  "tab_naming": "reverse1999",
+  "skip_keywords_extra": ["无需录制", "더빙 불필요", "녹음 불필요"]
+}

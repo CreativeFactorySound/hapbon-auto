@@ -6,22 +6,13 @@ from pathlib import Path
 from google import genai
 from google.genai import types
 
-import sys
-
-# 시스템 프롬프트를 외부 파일에서 로드
-# 규칙 수정 시 prompts/classify_system.txt 만 편집하면 됩니다
-# PyInstaller exe로 실행 시 sys._MEIPASS 경로 사용
-_BASE_DIR = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent
-_PROMPT_FILE = _BASE_DIR / "prompts" / "classify_system.txt"
-_CLASSIFY_SYSTEM_BASE = _PROMPT_FILE.read_text(encoding="utf-8")
-
 
 class GeminiClient:
     def __init__(self, api_key: str, profile: dict | None = None):
         self._client = genai.Client(api_key=api_key)
-        # 프로파일 기반 classify 시스템 프롬프트 조합
-        extra = (profile or {}).get("classify_extra", "").strip()
-        self._classify_system = _CLASSIFY_SYSTEM_BASE + ("\n" + extra if extra else "")
+        # 프로파일별 classify_system.txt 로드 (profiles/<id>/classify_system.txt)
+        from profile import get_classify_system
+        self._classify_system = get_classify_system(profile or {"id": "default"})
 
     def classify_sheet(
         self,
