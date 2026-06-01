@@ -397,9 +397,18 @@ def _log(log_entries: list, file: str, sheet: str, reason: str):
 
 def _resolve_sheet_name(profile: dict, fname: str, sname: str, cls: dict) -> str:
     """프로파일에 따라 탭명 생성 함수를 선택."""
-    if profile.get("tab_naming") == "reverse1999":
+    mode = profile.get("tab_naming", "standard")
+    if mode == "reverse1999":
         return make_sheet_name_rv1999(fname, sname, cls)
+    if mode == "original":
+        return _make_sheet_name_original(sname)
     return _make_sheet_name(fname, sname, cls)
+
+
+def _make_sheet_name_original(sname: str) -> str:
+    """원본 시트명을 그대로 사용 (Excel 금지 문자만 제거)."""
+    cleaned = re.sub(r"[:/\?*\[\]\\]", "", sname).strip()
+    return cleaned[:31] or "시트"
 
 
 def _make_sheet_name(fname: str, sname: str, cls: dict) -> str:

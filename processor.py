@@ -36,6 +36,19 @@ def _cell(row_vals: list, idx: int):
     return str(v).strip() if v is not None else None
 
 
+# 유효하지 않은 캐릭터명 — 녹음용으로 의미 없는 placeholder 값
+_INVALID_CHAR_NAMES = {"???", "？？？"}
+
+
+def _valid_char(name: str | None) -> str | None:
+    """캐릭터명이 유효한 경우에만 반환. ???·？？？ 등 플레이스홀더면 None."""
+    if not name:
+        return None
+    if name.strip() in _INVALID_CHAR_NAMES:
+        return None
+    return name
+
+
 def _est_sec_kr(text: str) -> float:
     """한국어 글자 수로 예상 녹음 시간(초) 추정."""
     if not text:
@@ -310,9 +323,11 @@ def _extract_main(ws, cls: dict) -> list[dict]:
         # 감정: 녹음언어 우선, 없으면 CN
         emotion = emotion_rec or emotion_cn or ""
 
+        # ???는 녹음 의미 없는 표시명 — 실제 캐릭터명 열 우선, 둘 다 ???면 그대로 사용
+        char = _valid_char(char_rec) or _valid_char(char_cn) or char_rec or char_cn or ""
         result.append({
             "파일명": filename or "",
-            "캐릭터명": char_rec or char_cn or "",
+            "캐릭터명": char,
             "감정": emotion,
             "REC": "",
             "대사": dialogue_rec or "",
@@ -375,10 +390,11 @@ def _extract_pv(ws, cls: dict) -> list[dict]:
 
         emotion = emotion_rec or emotion_cn or ""
         timing = _timing_flag(dialogue_rec or "", duration_raw, record) if dur >= 0 else ""
+        char = _valid_char(char_rec) or _valid_char(char_cn) or char_rec or char_cn or ""
 
         result.append({
             "파일명": "",
-            "캐릭터명": char_rec or char_cn or "",
+            "캐릭터명": char,
             "감정": emotion,
             "REC": "",
             "대사": dialogue_rec or "",
@@ -449,9 +465,10 @@ def _extract_battle(ws, cls: dict) -> list[dict]:
             continue
 
         emotion = emotion_rec or emotion_cn or ""
+        char = _valid_char(char_rec) or _valid_char(char_cn) or char_rec or char_cn or ""
         result.append({
             "파일명": filename or "",
-            "캐릭터명": char_rec or char_cn or "",
+            "캐릭터명": char,
             "감정": emotion,
             "REC": "",
             "대사": dialogue_rec or "",
@@ -616,9 +633,10 @@ def _extract_short(ws, cls: dict) -> list[dict]:
             emotion_rec = (emotion_rec or "") + "[번역 없음]"
 
         emotion = emotion_rec or emotion_cn or ""
+        char = _valid_char(char_rec) or _valid_char(char_cn) or char_rec or char_cn or ""
         result.append({
             "파일명":       filename or "",
-            "캐릭터명":     char_rec or char_cn or "",
+            "캐릭터명":     char,
             "감정":         emotion,
             "REC":          "",
             "대사":         dialogue_rec or "",
@@ -699,9 +717,10 @@ def _extract_infinite(ws, cls: dict) -> list[dict]:
             if dur:
                 timing = _timing_flag(dialogue_rec or "", f"{dur}s", record)
 
+        char = _valid_char(char_rec) or _valid_char(char_cn) or char_rec or char_cn or ""
         result.append({
             "파일명": filename or "",
-            "캐릭터명": char_rec or char_cn or "",
+            "캐릭터명": char,
             "감정": "",
             "ADR/Wild": adr_wild or "",
             "타임코드": timecode or "",

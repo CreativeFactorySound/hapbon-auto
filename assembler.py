@@ -23,7 +23,7 @@ from openpyxl.utils import get_column_letter
 HDR_BG = "1F3864"
 HDR_FG = "FFFFFF"
 DIAL_BG = "FFFDE7"
-CHAR_BG = "92D050"
+CHAR_BG = "9DC3E6"
 REC_BG  = "EA9999"
 EMO_BG  = "FFE599"
 ROW_ALT = "F5F5F5"
@@ -72,7 +72,7 @@ def build_hapbon(
     no_optical = (optical_lang == "NONE")
 
     # 데이터 시트 추가
-    all_sheet_data = []  # [(sheet_name, rows)] — 개괄 집계용
+    all_sheet_data = []  # [(sheet_name, rows, type)] — 개괄 집계용
     for group in GROUP_ORDER:
         for item in grouped.get(group, []):
             sname = item["sheet_name_out"][:31]
@@ -87,11 +87,16 @@ def build_hapbon(
     if include_summary:
         _add_summary_sheet(wb, all_sheet_data, summary_mode=summary_mode)
 
+    # 특이사항 시트 (누락·오류 자동 검사)
+    issues = _validate_processed(processed)
+    if issues:
+        _add_issues_sheet(wb, issues)
+
     # 로그 시트 (스킵된 항목 있을 때만)
     if log_entries:
         _add_log_sheet(wb, log_entries)
 
-    # 시트 순서 재배치: 개괄 → 로그 → 데이터
+    # 시트 순서 재배치: 개괄 → 특이사항 → 로그 → 데이터
     _reorder_sheets(wb)
 
     wb.save(output_path)
@@ -391,15 +396,19 @@ def _add_summary_sheet(wb: openpyxl.Workbook, all_sheet_data: list[tuple], summa
             char_tab_lines[char][sname] = char_tab_lines[char].get(sname, 0) + 1
             char_tab_words[char][sname] = char_tab_words[char].get(sname, 0) + words
 
-    # 헤더: summary_mode에 따라 부제목 결정
-    if summary_mode == "lines":
-        tab_suffix, total_label = "", "합계"
-    elif summary_mode == "words":
-        tab_suffix, total_label = "\n(단어)", "합계\n(단어)"
-    else:  # both
-        tab_suffix, total_label = "\n(라인/단어)", "합계\n(라인/단어)"
+    # ── 헤더 구성 ────────────────────────────────────────────────────────────
+    # "both" 모드: 탭마다 (라인) + (단어) 두 열로 분리
+    if summary_mode == "both":
+        header = ["캐릭터명", "성우명"]
+        for t in tab_names:
+            header.append(f"{t}\n(라인)")
+            header.append(f"{t}\n(단어)")
+        header += ["합계\n(라인)", "합계\n(단어)"]
+    elif summary_mode == "lines":
+        header = ["캐릭터명", "성우명"] + list(tab_names) + ["합계"]
+    else:  # words
+        header = ["캐릭터명", "성우명"] + [f"{t}\n(단어)" for t in tab_names] + ["합계\n(단어)"]
 
-    header = ["캐릭터명", "성우명"] + [f"{t}{tab_suffix}" for t in tab_names] + [total_label]
     ws.append(header)
 
     # 헤더 스타일
@@ -412,7 +421,7 @@ def _add_summary_sheet(wb: openpyxl.Workbook, all_sheet_data: list[tuple], summa
         cell.border    = _HDR_BORDER
     ws.row_dimensions[1].height = 28 if summary_mode == "lines" else 36
 
-    # 캐릭터별 행 (총 라인 수 내림차순)
+    # ── 캐릭터별 행 (총 라인 수 내림차순) ─────────────────────────────────
     sorted_chars = sorted(
         char_tab_lines.items(),
         key=lambda x: sum(x[1].values()),
@@ -422,53 +431,163 @@ def _add_summary_sheet(wb: openpyxl.Workbook, all_sheet_data: list[tuple], summa
         total_lines = sum(line_map.values())
         total_words = sum(char_tab_words[char].values())
 
-        tab_cells = []
-        for t in tab_names:
-            ln = line_map.get(t, 0)
-            wd = char_tab_words[char].get(t, 0)
-            if not ln:
-                tab_cells.append("")
-            elif summary_mode == "lines":
-                tab_cells.append(ln)
-            elif summary_mode == "words":
-                tab_cells.append(wd)
-            else:
-                tab_cells.append(f"{ln} / {wd}")
+        if summary_mode == "both":
+            tab_cells = []
+            for t in tab_names:
+                ln = line_map.get(t, 0)
+                wd = char_tab_words[char].get(t, 0)
+                tab_cells.append(ln if ln else "")
+                tab_cells.append(wd if wd else "")
+            row_vals = [char, ""] + tab_cells + [total_lines, total_words]
+        elif summary_mode == "lines":
+            tab_cells = [line_map.get(t, 0) or "" for t in tab_names]
+            row_vals = [char, ""] + tab_cells + [total_lines]
+        else:  # words
+            tab_cells = [char_tab_words[char].get(t, 0) or "" for t in tab_names]
+            row_vals = [char, ""] + tab_cells + [total_words]
 
-        if summary_mode == "lines":
-            total_cell = total_lines
-        elif summary_mode == "words":
-            total_cell = total_words
-        else:
-            total_cell = f"{total_lines} / {total_words}"
-
-        row_vals = [char, ""] + tab_cells + [total_cell]
         ws.append(row_vals)
 
-        for c_idx, _ in enumerate(row_vals, 1):
+        # 셀별 스타일
+        for c_idx, col_hdr in enumerate(header, 1):
             cell = ws.cell(row=r_idx, column=c_idx)
-            col_name = header[c_idx - 1]
-            cell.border = _CELL_BORDER
-            if col_name == "캐릭터명":
+            cell.border    = _CELL_BORDER
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            if col_hdr == "캐릭터명":
                 cell.font = Font(name="맑은 고딕", size=9, bold=True)
-            elif col_name == "성우명":
+            elif col_hdr == "성우명":
                 cell.fill = PatternFill("solid", fgColor=SUMMARY_CAST_BG)
                 cell.font = Font(name="맑은 고딕", size=9)
-            elif col_name.startswith("합계"):
+            elif col_hdr.startswith("합계"):
                 cell.fill = PatternFill("solid", fgColor=SUMMARY_TOTAL_BG)
                 cell.font = Font(name="맑은 고딕", size=9, bold=True)
             else:
+                # "both" 모드에서 단어 수 열은 살짝 다른 배경
+                if summary_mode == "both" and col_hdr.endswith("(단어)"):
+                    cell.fill = PatternFill("solid", fgColor="EEF4FF")
                 cell.font = Font(name="맑은 고딕", size=9)
-            cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    # 열 폭
+    # ── 열 폭 ────────────────────────────────────────────────────────────────
     ws.column_dimensions["A"].width = 20
     ws.column_dimensions["B"].width = 14
-    for i in range(3, len(header) + 1):
-        # 탭 이름 길이 기준 (헤더에 "\n(라인/단어)" 붙어있으므로 원본 탭명 기준)
-        tab_name = tab_names[i - 3] if i - 3 < len(tab_names) else "합계"
-        ws.column_dimensions[get_column_letter(i)].width = max(16, len(tab_name) * 1.5)
 
+    if summary_mode == "both":
+        # 탭마다 열 2개: (라인) → 탭명 기반 폭, (단어) → 고정 10
+        col_i = 3
+        for t in tab_names:
+            ws.column_dimensions[get_column_letter(col_i)].width = max(14, len(t) * 1.4)
+            ws.column_dimensions[get_column_letter(col_i + 1)].width = 10
+            col_i += 2
+        ws.column_dimensions[get_column_letter(col_i)].width = 12      # 합계(라인)
+        ws.column_dimensions[get_column_letter(col_i + 1)].width = 10  # 합계(단어)
+    else:
+        for i in range(3, len(header) + 1):
+            tab_name = tab_names[i - 3] if i - 3 < len(tab_names) else "합계"
+            ws.column_dimensions[get_column_letter(i)].width = max(16, len(tab_name) * 1.5)
+
+    ws.freeze_panes = "A2"
+
+
+# ── 누락·오류 자동 검사 ───────────────────────────────────────────────────
+
+def _validate_processed(processed: list[dict]) -> list[dict]:
+    """처리된 시트 목록에서 누락/오류 항목을 검사해 이슈 리스트 반환.
+
+    반환 형식: [{"category": str, "tab": str, "detail": str}, ...]
+    """
+    issues: list[dict] = []
+    seen_files: dict[str, str] = {}   # filename → 최초 등장 탭명
+    dup_reported: set[str] = set()    # 중복 보고 중복 방지
+
+    # 탭별 카운터
+    tab_no_char:  dict[str, int] = {}
+    tab_no_dial:  dict[str, int] = {}
+
+    for item in processed:
+        if item.get("type") == "Type_명방캐릭터":
+            continue
+        tab = item.get("sheet_name_out", "?")
+        for row in (item.get("rows") or []):
+            if row is None:
+                continue
+            fname = (row.get("파일명") or "").strip()
+            char  = (row.get("캐릭터명") or "").strip()
+            dial  = (row.get("대사") or "").strip()
+
+            # 캐릭터명 없음
+            if not char:
+                tab_no_char[tab] = tab_no_char.get(tab, 0) + 1
+
+            # 대사 없음 (파일명은 있는데 대사가 빈 경우)
+            if fname and not dial:
+                tab_no_dial[tab] = tab_no_dial.get(tab, 0) + 1
+
+            # 파일명 중복
+            if fname:
+                if fname in seen_files:
+                    if fname not in dup_reported:
+                        dup_reported.add(fname)
+                        issues.append({
+                            "category": "파일명 중복",
+                            "tab": tab,
+                            "detail": f"[{fname}] 최초: [{seen_files[fname]}] / 재등장: [{tab}]",
+                        })
+                else:
+                    seen_files[fname] = tab
+
+    for tab, cnt in tab_no_char.items():
+        issues.append({
+            "category": "캐릭터명 없음",
+            "tab": tab,
+            "detail": f"[{tab}] 캐릭터명 비어있는 행 {cnt}개",
+        })
+    for tab, cnt in tab_no_dial.items():
+        issues.append({
+            "category": "대사 없음",
+            "tab": tab,
+            "detail": f"[{tab}] 파일명 있으나 대사 비어있는 행 {cnt}개",
+        })
+
+    return issues
+
+
+def _add_issues_sheet(wb: openpyxl.Workbook, issues: list[dict]):
+    """특이사항 시트 생성."""
+    ws = wb.create_sheet(title="특이사항")
+    header = ["유형", "탭명", "내용"]
+    ws.append(header)
+
+    hdr_fill = PatternFill("solid", fgColor=HDR_BG)
+    hdr_font = Font(name="맑은 고딕", size=10, bold=True, color=HDR_FG)
+    for cell in ws[1]:
+        cell.fill      = hdr_fill
+        cell.font      = hdr_font
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border    = _HDR_BORDER
+
+    # 유형별 색상
+    _CAT_BG = {
+        "파일명 중복": "FFE5CC",
+        "캐릭터명 없음": "FFF2CC",
+        "대사 없음":    "EBF3FB",
+    }
+
+    for r_idx, issue in enumerate(issues, 2):
+        cat = issue.get("category", "")
+        tab = issue.get("tab", "")
+        detail = issue.get("detail", "")
+        ws.append([cat, tab, detail])
+        bg = _CAT_BG.get(cat, "FFFFFF")
+        for c_idx in range(1, 4):
+            cell = ws.cell(row=r_idx, column=c_idx)
+            cell.fill      = PatternFill("solid", fgColor=bg)
+            cell.font      = Font(name="맑은 고딕", size=9)
+            cell.border    = _CELL_BORDER
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+    ws.column_dimensions["A"].width = 16
+    ws.column_dimensions["B"].width = 20
+    ws.column_dimensions["C"].width = 60
     ws.freeze_panes = "A2"
 
 
@@ -495,18 +614,14 @@ def _add_log_sheet(wb: openpyxl.Workbook, log_entries: list[dict]):
 
 def _reorder_sheets(wb: openpyxl.Workbook):
     names = wb.sheetnames
-    front = []
-    back  = []
-    for n in names:
-        if n in ("개괄", "로그"):
-            front.append(n)
-        else:
-            back.append(n)
-    ordered = (["개괄"] if "개괄" in front else []) + ([n for n in front if n != "개괄"]) + back
-    # 로그는 개괄 바로 다음
-    if "로그" in ordered:
-        ordered.remove("로그")
-        ordered.insert(1, "로그")
+    FRONT = {"개괄", "특이사항", "로그"}
+    front = [n for n in names if n in FRONT]
+    back  = [n for n in names if n not in FRONT]
+
+    # 고정 순서: 개괄 → 특이사항 → 로그 → 나머지
+    priority = ["개괄", "특이사항", "로그"]
+    ordered  = [n for n in priority if n in front] + back
+
     for i, name in enumerate(ordered):
         if name in wb.sheetnames:
             wb.move_sheet(name, offset=wb.sheetnames.index(name) * -1 + i)
