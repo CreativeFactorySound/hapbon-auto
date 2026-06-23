@@ -35,6 +35,10 @@ class GeminiClient:
         )
         last_err = None
         for attempt in range(max_retries):
+            if attempt > 0:
+                wait = 8 * (2 ** (attempt - 1))
+                print(f"\n  [재시도 {attempt}/{max_retries}] {wait}초 대기...", end=" ", flush=True)
+                time.sleep(wait)
             try:
                 response = self._client.models.generate_content(
                     model="gemini-2.5-flash",
@@ -45,14 +49,17 @@ class GeminiClient:
                         temperature=0.0,
                     ),
                 )
-                return _parse_json_response(response.text)
+                result = _parse_json_response(response.text)
+                if attempt > 0:
+                    time.sleep(2)   # 재시도 성공 후 다음 요청까지 여유
+                else:
+                    time.sleep(1)   # 정상 성공 후에도 1초 간격 유지
+                return result
             except Exception as e:
                 last_err = e
                 err_str = str(e)
                 if "503" in err_str or "429" in err_str or "UNAVAILABLE" in err_str:
-                    wait = 8 * (2 ** attempt)
-                    print(f"\n  [재시도 {attempt+1}/{max_retries}] {wait}초 대기...", end=" ", flush=True)
-                    time.sleep(wait)
+                    continue
                 else:
                     raise
         raise last_err
