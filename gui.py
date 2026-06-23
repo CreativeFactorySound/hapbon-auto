@@ -63,6 +63,8 @@ class HapbonGUI:
         self._done_sheets   = 0
         self._proc          = None   # 실행 중인 subprocess
         self._paused        = False  # 일시정지 상태
+        self._start_time    = None   # 실행 시작 시각
+        self._timer_job     = None   # after() 타이머 job ID
 
         cfg = load_config()
         self._build_ui(cfg)
@@ -124,17 +126,22 @@ class HapbonGUI:
         prog_frame = tk.Frame(self.root)
         prog_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 4))
         prog_frame.columnconfigure(0, weight=1)
+        prog_frame.columnconfigure(1, weight=0)
 
         self._progress_var = tk.DoubleVar(value=0)
         self._progress_bar = ttk.Progressbar(
             prog_frame, variable=self._progress_var,
             maximum=100, length=400, mode="determinate"
         )
-        self._progress_bar.grid(row=0, column=0, sticky="ew")
+        self._progress_bar.grid(row=0, column=0, columnspan=2, sticky="ew")
 
         self._status_var = tk.StringVar(value="대기 중")
         ttk.Label(prog_frame, textvariable=self._status_var,
                   anchor="w", foreground="#555555").grid(row=1, column=0, sticky="w", pady=(2, 0))
+
+        self._timer_var = tk.StringVar(value="")
+        ttk.Label(prog_frame, textvariable=self._timer_var,
+                  anchor="e", foreground="#888888").grid(row=1, column=1, sticky="e", pady=(2, 0))
 
         # ── 로그 창 ──────────────────────────────────────────
         log_frame = ttk.LabelFrame(self.root, text="진행 로그", padding=5)
@@ -226,6 +233,36 @@ class HapbonGUI:
         elif "❌" in line or "ERROR" in line:
             self._status_var.set("❌ 오류 발생 — 로그를 확인하세요")
 
+    # ── 타이머 ───────────────────────────────────────────────────────────
+
+    def _start_timer(self):
+        import time
+        self._start_time = time.time()
+        self._tick_timer()
+
+    def _stop_timer(self):
+        if self._timer_job:
+            self.root.after_cancel(self._timer_job)
+            self._timer_job = None
+
+    def _tick_timer(self):
+        import time
+        if self._start_time is None:
+            return
+        elapsed = int(time.time() - self._start_time)
+        e_str = f"{elapsed // 60:02d}:{elapsed % 60:02d}"
+
+        pct = self._progress_var.get()
+        if pct > 5:
+            total_est = elapsed / (pct / 100)
+            remaining = max(0, int(total_est - elapsed))
+            r_str = f"{remaining // 60:02d}:{remaining % 60:02d}"
+            self._timer_var.set(f"경과 {e_str}  |  예상 잔여 {r_str}")
+        else:
+            self._timer_var.set(f"경과 {e_str}")
+
+        self._timer_job = self.root.after(1000, self._tick_timer)
+
     # ── 일시정지 / 정지 ──────────────────────────────────────────────────
 
     def _toggle_pause(self):
@@ -311,9 +348,12 @@ class HapbonGUI:
         self.log.configure(state="disabled")
         self._progress_var.set(0)
         self._status_var.set("시작 중...")
+        self._timer_var.set("")
         self._total_sheets = 0
         self._done_sheets  = 0
         self._paused       = False
+        self._stop_timer()
+        self._start_timer()
 
         def worker():
             try:
@@ -338,6 +378,7 @@ class HapbonGUI:
                 self.root.after(0, self._log, f"\n❌ 실행 오류: {e}\n")
             finally:
                 self._proc = None
+                self.root.after(0, self._stop_timer)
                 self.root.after(0, lambda: self.run_btn.configure(state="normal", text="▶  합본 생성 시작"))
                 self.root.after(0, lambda: self.pause_btn.configure(state="disabled", text="⏸  일시정지"))
                 self.root.after(0, lambda: self.stop_btn.configure(state="disabled"))
