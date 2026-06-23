@@ -2,6 +2,7 @@
 
 import tkinter as tk
 from tkinter import ttk, filedialog, scrolledtext
+import ctypes
 import json
 import os
 import io
@@ -10,6 +11,19 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+
+# Windows 프로세스 일시정지/재개
+def _suspend_process(proc):
+    try:
+        ctypes.windll.ntdll.NtSuspendProcess(int(proc._handle))
+    except Exception:
+        pass
+
+def _resume_process(proc):
+    try:
+        ctypes.windll.ntdll.NtResumeProcess(int(proc._handle))
+    except Exception:
+        pass
 
 CONFIG_FILE = Path(__file__).parent / ".hapbon_gui_config.json"
 
@@ -47,6 +61,8 @@ class HapbonGUI:
         # 진행률 추적용 상태
         self._total_sheets  = 0
         self._done_sheets   = 0
+        self._proc          = None   # 실행 중인 subprocess
+        self._paused        = False  # 일시정지 상태
 
         cfg = load_config()
         self._build_ui(cfg)
@@ -88,9 +104,21 @@ class HapbonGUI:
         ttk.Button(frame, text="찾기", width=6,
                    command=self._browse_output).grid(row=5, column=2)
 
-        # ── 실행 버튼 ──────────────────────────────────────────
-        self.run_btn = ttk.Button(self.root, text="▶  합본 생성 시작", command=self._run)
-        self.run_btn.grid(row=1, column=0, sticky="ew", padx=10, pady=(4, 2))
+        # ── 실행 / 일시정지 / 정지 버튼 ───────────────────────────
+        btn_frame = tk.Frame(self.root)
+        btn_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(4, 2))
+        btn_frame.columnconfigure(0, weight=3)
+        btn_frame.columnconfigure(1, weight=1)
+        btn_frame.columnconfigure(2, weight=1)
+
+        self.run_btn = ttk.Button(btn_frame, text="▶  합본 생성 시작", command=self._run)
+        self.run_btn.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+
+        self.pause_btn = ttk.Button(btn_frame, text="⏸  일시정지", command=self._toggle_pause, state="disabled")
+        self.pause_btn.grid(row=0, column=1, sticky="ew", padx=(0, 4))
+
+        self.stop_btn = ttk.Button(btn_frame, text="⏹  정지", command=self._stop, state="disabled")
+        self.stop_btn.grid(row=0, column=2, sticky="ew")
 
         # ── 진행률 바 ──────────────────────────────────────────
         prog_frame = tk.Frame(self.root)
@@ -198,6 +226,37 @@ class HapbonGUI:
         elif "❌" in line or "ERROR" in line:
             self._status_var.set("❌ 오류 발생 — 로그를 확인하세요")
 
+    # ── 일시정지 / 정지 ──────────────────────────────────────────────────
+
+    def _toggle_pause(self):
+        if not self._proc:
+            return
+        if self._paused:
+            _resume_process(self._proc)
+            self._paused = False
+            self.pause_btn.configure(text="⏸  일시정지")
+            self._status_var.set(self._status_var.get().replace("⏸ 일시정지됨", "").strip() or "실행 재개")
+            self._log("\n[재개]\n")
+        else:
+            _suspend_process(self._proc)
+            self._paused = True
+            self.pause_btn.configure(text="▶  재개")
+            self._status_var.set("⏸ 일시정지됨")
+            self._log("\n[일시정지]\n")
+
+    def _stop(self):
+        if not self._proc:
+            return
+        if self._paused:
+            _resume_process(self._proc)
+            self._paused = False
+        try:
+            self._proc.terminate()
+        except Exception:
+            pass
+        self._log("\n[정지] 사용자가 중단했습니다.\n")
+        self._status_var.set("🛑 정지됨")
+
     # ── 실행 ─────────────────────────────────────────────────────────────
 
     def _run(self):
@@ -245,6 +304,8 @@ class HapbonGUI:
 
         # UI 초기화
         self.run_btn.configure(state="disabled", text="실행 중...")
+        self.pause_btn.configure(state="normal")
+        self.stop_btn.configure(state="normal")
         self.log.configure(state="normal")
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
@@ -252,6 +313,7 @@ class HapbonGUI:
         self._status_var.set("시작 중...")
         self._total_sheets = 0
         self._done_sheets  = 0
+        self._paused       = False
 
         def worker():
             try:
@@ -262,19 +324,23 @@ class HapbonGUI:
                     encoding="utf-8",
                     errors="replace",
                 )
+                self._proc = proc
                 for line in proc.stdout:
                     self.root.after(0, self._log, line)
                 proc.wait()
                 if proc.returncode == 0:
                     self.root.after(0, self._log, "\n✅ 완료!\n")
                     self.root.after(0, self._set_progress, 100, "🎉 완료!")
-                else:
+                elif proc.returncode == 1 and self._paused is False:
                     self.root.after(0, self._log, f"\n❌ 오류 발생 (종료코드 {proc.returncode})\n")
                     self.root.after(0, self._status_var.set, "❌ 오류 발생")
             except Exception as e:
                 self.root.after(0, self._log, f"\n❌ 실행 오류: {e}\n")
             finally:
+                self._proc = None
                 self.root.after(0, lambda: self.run_btn.configure(state="normal", text="▶  합본 생성 시작"))
+                self.root.after(0, lambda: self.pause_btn.configure(state="disabled", text="⏸  일시정지"))
+                self.root.after(0, lambda: self.stop_btn.configure(state="disabled"))
 
         threading.Thread(target=worker, daemon=True).start()
 
