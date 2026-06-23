@@ -20,7 +20,7 @@ class GeminiClient:
         sheetname: str,
         rows_preview: list[list],
         optical_lang: str,
-        max_retries: int = 6,
+        max_retries: int = 8,
     ) -> dict:
         """시트 분류 + 컬럼 매핑 JSON 반환. 503/429 에러 시 자동 재시도."""
         import time
@@ -36,7 +36,7 @@ class GeminiClient:
         last_err = None
         for attempt in range(max_retries):
             if attempt > 0:
-                wait = 8 * (2 ** (attempt - 1))
+                wait = 3 * (2 ** (attempt - 1))   # 3→6→12→24→48→96→192→384
                 print(f"\n  [재시도 {attempt}/{max_retries}] {wait}초 대기...", end=" ", flush=True)
                 time.sleep(wait)
             try:
@@ -50,10 +50,7 @@ class GeminiClient:
                     ),
                 )
                 result = _parse_json_response(response.text)
-                if attempt > 0:
-                    time.sleep(2)   # 재시도 성공 후 다음 요청까지 여유
-                else:
-                    time.sleep(1)   # 정상 성공 후에도 1초 간격 유지
+                time.sleep(1)   # 호출 간격 유지
                 return result
             except Exception as e:
                 last_err = e
@@ -63,6 +60,19 @@ class GeminiClient:
                 else:
                     raise
         raise last_err
+
+    def classify_sheet_safe(
+        self,
+        filename: str,
+        sheetname: str,
+        rows_preview: list[list],
+        optical_lang: str,
+    ) -> dict | None:
+        """classify_sheet 래퍼. 실패 시 None 반환 (예외 미전파)."""
+        try:
+            return self.classify_sheet(filename, sheetname, rows_preview, optical_lang)
+        except Exception as e:
+            return None
 
 
 def _format_preview(rows: list[list]) -> str:

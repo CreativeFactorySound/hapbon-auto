@@ -105,6 +105,7 @@ def main():
 
     # 2. 분류
     classifications = []  # {file, fpath, sheet, cls}
+    failed_sheets  = []   # 6회 재시도 후 실패한 시트 — 전체 패스 후 재시도
     log_entries = []
 
     for fpath in xlsx_files:
@@ -160,10 +161,46 @@ def main():
                         "cls": cls,
                     })
             except Exception as e:
-                print(f"ERROR: {e}")
-                _log(log_entries, fpath.name, sname, f"분류 오류: {e}")
+                print(f"ERROR ({e}) → 나중에 재시도 예약")
+                _log(log_entries, fpath.name, sname, f"분류 오류(재시도 예약): {e}")
+                failed_sheets.append({
+                    "fpath": str(fpath),
+                    "file": fpath.name,
+                    "sheet": sname,
+                    "preview": preview,
+                    "ckey": ckey,
+                })
 
         wb.close()
+
+    # ── 실패 시트 재시도 (전체 1패스 끝난 뒤 30초 쉬고 다시 시도) ──────────
+    if failed_sheets:
+        import time as _time
+        print(f"\n[재시도] 실패 시트 {len(failed_sheets)}개 — 30초 후 재시도합니다...", flush=True)
+        _time.sleep(30)
+        for item in failed_sheets:
+            fpath_r = Path(item["fpath"])
+            sname_r = item["sheet"]
+            ckey_r  = item["ckey"]
+            print(f"  [{fpath_r.name} / {sname_r}] 재분류 중...", end=" ", flush=True)
+            cls = client.classify_sheet_safe(item["file"], sname_r, item["preview"], optical)
+            if cls is None:
+                print("재시도 실패 — SKIP")
+                _log(log_entries, item["file"], sname_r, "재시도 후에도 분류 실패")
+            elif cls["type"] == "SKIP":
+                reason = cls.get("skip_reason") or "분류 불가"
+                print(f"SKIP ({reason})")
+                _log(log_entries, item["file"], sname_r, reason)
+            else:
+                print(cls["type"])
+                _cache[ckey_r] = cls
+                _save_cache(_cache)
+                classifications.append({
+                    "file": item["file"],
+                    "fpath": item["fpath"],
+                    "sheet": sname_r,
+                    "cls": cls,
+                })
 
     print(f"\n[분류 완료] {len(classifications)}개 시트 처리 예정\n")
 
