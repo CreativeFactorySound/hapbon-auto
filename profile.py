@@ -7,7 +7,17 @@ import json
 import sys
 from pathlib import Path
 
-_PROFILES_DIR = Path(__file__).parent / "profiles"
+def _get_base_dir() -> Path:
+    """PyInstaller 패키징 여부에 따라 기준 디렉토리 반환."""
+    if getattr(sys, "frozen", False):
+        # exe 실행 시: sys._MEIPASS (번들 내부) 우선, 없으면 exe 옆 폴더
+        meipass = Path(getattr(sys, "_MEIPASS", ""))
+        if (meipass / "profiles").exists():
+            return meipass
+        return Path(sys.executable).parent
+    return Path(__file__).parent
+
+_PROFILES_DIR = _get_base_dir() / "profiles"
 
 # 표시 순서
 _PROFILE_ORDER = ["default", "reverse1999", "muhandae"]
